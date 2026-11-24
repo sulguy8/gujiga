@@ -1,0 +1,10 @@
+{
+  "name": "gujiga",
+  "version": "0.0.1",
+  "private": true,
+  "description": "주식투자 앱 — 파일(md·jsonl)+Git 저장소. Node 내장 모듈만(zero-dependency).",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  }
+}
