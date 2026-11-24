@@ -212,6 +212,91 @@ test('AC4: 소스가 Node 내장 모듈만 사용(외부 패키지 0)', () => {
   }
 });
 
+// =========================================================================
+// 군사 검토 보완(TSK-001): 데이터 폴더를 공유 저장소 밖으로 분리
+// =========================================================================
+
+// gujiga 공유 저장소 최상위 경로
+function gujigaRoot() {
+  return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: __dirname }).toString().trim();
+}
+function commitCount(repo) {
+  try {
+    return Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: repo }).toString().trim());
+  } catch { return 0; }
+}
+
+// 보완1: resolveDataDir 기본값이 저장소 밖(홈\gujiga-data) ---
+test('보완1: 기본 데이터 폴더는 홈\\gujiga-data (저장소 밖)', () => {
+  const saved = process.env.GUJIGA_DATA_DIR;
+  delete process.env.GUJIGA_DATA_DIR;
+  try {
+    const def = paths.resolveDataDir();
+    assert.equal(def, path.join(os.homedir(), 'gujiga-data'), '기본값은 홈\\gujiga-data여야 한다');
+
+    // 공유 저장소 밖이어야 한다
+    const root = path.resolve(gujigaRoot());
+    assert.ok(!path.resolve(def).toLowerCase().startsWith(root.toLowerCase()), '기본 폴더가 저장소 안이면 안 된다');
+
+    // 우선순위 유지: opts > env > 기본
+    assert.equal(paths.resolveDataDir({ dataDir: 'X:/explicit' }), 'X:/explicit', 'opts가 최우선');
+    process.env.GUJIGA_DATA_DIR = 'Y:/env';
+    assert.equal(paths.resolveDataDir(), 'Y:/env', 'env가 기본보다 우선');
+  } finally {
+    if (saved === undefined) delete process.env.GUJIGA_DATA_DIR;
+    else process.env.GUJIGA_DATA_DIR = saved;
+  }
+});
+
+// 보완2a: git 저장소가 아닌 데이터 폴더 → git init(원격 없음) 후 커밋 ---
+test('보완2a: git 아닌 데이터 폴더는 로컬 전용으로 init 후 커밋', () => {
+  const dir = makeTmpDir(); // git 저장소 아님
+  try {
+    const res = state.write('watchlist', { items: ['005930'] }, { dataDir: dir });
+    assert.equal(res.committed, true, '커밋되어야 한다');
+
+    // 자체 git 저장소가 되었고 커밋 1개
+    assert.ok(fs.existsSync(path.join(dir, '.git')), 'git init 되어야 한다');
+    assert.equal(commitCount(dir), 1, '커밋 1개여야 한다');
+
+    // 원격 설정 금지
+    const remotes = execFileSync('git', ['remote'], { cwd: dir }).toString().trim();
+    assert.equal(remotes, '', '원격이 없어야 한다(로컬 전용)');
+
+    // 값 보존
+    assert.deepEqual(state.read('watchlist', { dataDir: dir }), { items: ['005930'] });
+  } finally {
+    rm(dir);
+  }
+});
+
+// 보완2b: 데이터 폴더가 공유 저장소 gujiga 안이면 커밋 금지·경고 + gujiga 커밋 불변 ---
+test('보완2b: 공유 저장소 안 데이터는 커밋 안 하고 경고(gujiga 커밋 불변)', () => {
+  const root = gujigaRoot();
+  const sub = path.join(root, `.tmp-tst001-data-${process.pid}`); // 저장소 안의 임시 데이터 폴더
+  const before = commitCount(root);
+  const printed = [];
+  const orig = console.warn;
+  console.warn = (...a) => printed.push(a.join(' '));
+  try {
+    const res = state.write('nation_ledger', { cash: 1 }, { dataDir: sub });
+    assert.equal(res.committed, false, '공유 저장소 안에서는 커밋하면 안 된다');
+    assert.ok(printed.some((l) => /커밋 생략|공유 저장소/.test(l)), '경고가 출력되어야 한다');
+
+    // 핵심: gujiga 저장소에 새 커밋이 생기지 않아야 한다
+    assert.equal(commitCount(root), before, 'gujiga 저장소 커밋 수가 변하면 안 된다');
+  } finally {
+    console.warn = orig;
+    fs.rmSync(sub, { recursive: true, force: true });
+  }
+});
+
+// 보완3: .gitignore에 data/ 가 포함되어 있다 ---
+test('보완3: .gitignore에 data/ 포함', () => {
+  const gi = fs.readFileSync(path.join(__dirname, '..', '.gitignore'), 'utf8');
+  assert.match(gi, /^data\/$/m, '.gitignore에 data/ 가 있어야 한다');
+});
+
 // paths 헬퍼가 일관된 레이아웃을 주는지(보조)
 test('보조: paths 레이아웃 규칙', () => {
   const dir = '/tmp/x';

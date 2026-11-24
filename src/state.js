@@ -33,22 +33,69 @@ function write(name, value, opts) {
   // 사람이 읽을 수 있도록 들여쓰기 + 끝 개행.
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
 
-  const gitRoot = (opts && opts.gitRoot) || dataDir;
   const message = (opts && opts.message) || `state: update ${name}`;
-  const committed = gitCommit(gitRoot, file, message);
+  const committed = gitCommit(dataDir, file, message);
 
   return { file, committed };
 }
 
-// 상태 파일 1개를 스테이징하고 커밋한다.
+// --- Git 커밋 전략 (군사 검토 반영) ---
+//
+// 운영 장부는 "데이터 폴더 자체의 로컬 전용 저장소"에만 커밋한다.
+//   1) dataDir가 공유 저장소 gujiga 안이면        → 커밋 금지, 경고만(사고 방지).
+//   2) dataDir가 자체 git 저장소면                → 거기에 커밋.
+//   3) dataDir가 어떤 git 저장소도 아니면          → git init(원격 설정 금지) 후 커밋.
 // 전역 git 설정에 의존하지 않도록 user.name/email을 -c로 주입한다.
-// git 저장소가 아니거나 변경이 없으면 조용히 false를 반환한다(상태 저장 자체는 성공).
-function gitCommit(gitRoot, file, message) {
-  const base = ['-c', 'user.name=gujiga', '-c', 'user.email=gujiga@local'];
-  const run = (args) => execFileSync('git', [...base, ...args], { cwd: gitRoot, stdio: 'pipe' });
+
+function git(cwd, args) {
+  return execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
+}
+
+// 주어진 디렉터리를 포함하는 git 저장소의 최상위 경로(없으면 null).
+function topLevel(dir) {
   try {
+    return git(dir, ['rev-parse', '--show-toplevel']).trim();
+  } catch {
+    return null;
+  }
+}
+
+function samePath(a, b) {
+  if (!a || !b) return false;
+  const na = path.resolve(a);
+  const nb = path.resolve(b);
+  return process.platform === 'win32' ? na.toLowerCase() === nb.toLowerCase() : na === nb;
+}
+
+// 이 코드가 들어있는 공유 저장소(gujiga)의 최상위 — 운영 장부가 여기 커밋되면 안 된다.
+let _sharedRoot;
+function sharedRoot() {
+  if (_sharedRoot === undefined) _sharedRoot = topLevel(__dirname);
+  return _sharedRoot;
+}
+
+function gitCommit(dataDir, file, message) {
+  const dataTop = topLevel(dataDir);
+  const shared = sharedRoot();
+
+  // 1) dataDir가 공유 저장소 안(최상위가 gujiga) → 커밋하지 않고 경고.
+  if (dataTop && samePath(dataTop, shared)) {
+    console.warn(
+      `[상태 커밋 생략] 데이터 폴더가 공유 저장소(${shared}) 안에 있어 커밋하지 않습니다 — ` +
+      `운영 장부를 저장소 밖에 두세요(GUJIGA_DATA_DIR). 파일은 저장됨: ${path.resolve(file)}`
+    );
+    return false;
+  }
+
+  const base = ['-c', 'user.name=gujiga', '-c', 'user.email=gujiga@local'];
+  const run = (args) => git(dataDir, [...base, ...args]);
+  try {
+    // 3) 자체 저장소가 아니면 로컬 전용으로 초기화(원격 설정 금지).
+    if (!dataTop) {
+      git(dataDir, ['init', '-q']);
+    }
+    // 2)/3) 자체(또는 방금 만든) 저장소에 커밋.
     run(['add', '--', path.resolve(file)]);
-    // 변경이 없으면 커밋하지 않는다(--allow-empty를 쓰지 않음).
     run(['commit', '-q', '-m', message, '--', path.resolve(file)]);
     return true;
   } catch {

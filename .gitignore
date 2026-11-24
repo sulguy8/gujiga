@@ -1,0 +1,17 @@
+# --- octet 런타임(로컬 전용, 커밋 금지) ---
+.octet/octetd.pid
+.octet/*.lock
+.octet/queue/
+.octet/worktrees/
+.octet/conflicts/
+.octet/identity.json
+# .octet/config.json · stakeholders.json · CLAUDE.md · .claude/ 는 커밋(팀 공유)
+
+# --- 비밀(절대 커밋 금지, 장수 군령 5) ---
+secrets/
+*.secret
+*token*.json
+kis*.json
+
+# --- 운영 장부(저장소 밖에 둠; 혹시 저장소 안에 생겨도 커밋 금지, TSK-001) ---
+data/
