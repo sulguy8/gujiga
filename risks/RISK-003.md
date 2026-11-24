@@ -3,12 +3,12 @@ type: risk
 id: RISK-003
 title: 계정 경로 이전 사고
 status: mitigating
-likelihood: mid
+likelihood: low
 impact: mid
 owner: 조용수
 cards: [NTE-002]
 created_at: 2026-11-24T00:33:39Z
-updated_at: 2026-11-24T00:34:23Z
+updated_at: 2026-11-24T00:34:29Z
 ---
 
 # RISK-003 — 계정 경로 이전 사고
@@ -26,5 +26,6 @@ updated_at: 2026-11-24T00:34:23Z
 정시 루틴(브리핑·정찰·마감 점검)의 기록이 저장되지 않아 해당 회차 결과가 유실되고, 알아차리기 전까지 반복 실패할 수 있다.
 
 ## 변경 이력
+- 2026-11-24 00:34 · 조용수 · 가능성 변경
 - 2026-11-24 00:34 · 조용수 · 상태 → 완화중
 - 2026-11-24 00:33 · 조용수 · AI 초안 생성
