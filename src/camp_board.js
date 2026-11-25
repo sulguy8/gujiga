@@ -29,9 +29,10 @@ function readLedgerRows(dataDir, name) {
   return out;
 }
 
-// 병사 환산: 금액(원) → 명. 1만원=1명, 표시 반올림(포로 환산과 동일 규칙 — captivesOf 재사용).
+// 병사 환산: 금액(원) → 명. 병법서 1조 — 1만원당 1명, '소수점 버림'(155,000원 → 15명, 9,999원 → 0명).
+// 반올림은 포로 환산(captivesOf)에만 쓴다 — 두 규칙을 섞지 않는다(군주 명 2026-11-25).
 function troopsOf(amountWon) {
-  return captives.captivesOf(amountWon);
+  return Math.floor(amountWon / 10000);
 }
 
 // 관직 카드: 현재 관직·한도·승진 진행. 승진 조건 충족 시 eligible(표시만 — 확정은 군주 수락).
