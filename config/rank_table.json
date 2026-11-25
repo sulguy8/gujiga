@@ -1,0 +1,8 @@
+{
+  "_comment": "관직 표 — 코드가 아닌 설정으로 관리(REQ-013 비기능 요구: 수치 조정에 배포 불필요). 1만원=병사 1명, per_order_limit_real = per_stock_troops_max × 10000.",
+  "hyeonryeong": { "label": "현령",   "per_stock_troops_max": 20,   "concurrent_max": 2,    "per_order_limit_real": 200000 },
+  "taesu":       { "label": "태수",   "per_stock_troops_max": 30,   "concurrent_max": 3,    "per_order_limit_real": 300000 },
+  "jasa":        { "label": "자사",   "per_stock_troops_max": 40,   "concurrent_max": 4,    "per_order_limit_real": 400000 },
+  "daejanggun":  { "label": "대장군", "per_stock_troops_max": 50,   "concurrent_max": 5,    "per_order_limit_real": 500000 },
+  "seungsang":   { "label": "승상",   "per_stock_troops_max": null, "concurrent_max": null, "per_order_limit_real": null }
+}
