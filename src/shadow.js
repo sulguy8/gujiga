@@ -31,6 +31,8 @@ const preclose = require('./preclose');
 const gunshi = require('./gunshi');
 const market = require('./market');
 const notify = require('./notify');
+const benchmark = require('./benchmark');
+const retreat = require('./retreat');
 
 const JOBS = [
   { name: 'snapshot_0830', time: '08:30', catchup: true },
@@ -201,6 +203,150 @@ function runSnapshot(date, opts) {
   return { errors };
 }
 
+// --- 입금 감지(출사표 002): 설명 안 되는 총평가 변동 → flow_pending(군주 확인 대기) ---
+function detectUnexplainedFlow(date, opts) {
+  const dataDir = paths.resolveDataDir(opts);
+  if (readLog(dataDir, 'flow_pending').some((r) => r.date === date)) return; // 멱등(일 1회)
+  const snaps = readLog(dataDir, 'daily_account_snapshot')
+    .filter((r) => r.account_type === 'real')
+    .sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
+  if (snaps.length < 2) return;
+  const today = snaps[snaps.length - 1];
+  const prev = snaps[snaps.length - 2];
+  if (today.snapshot_date !== date) return;
+  const diff = today.start_total_eval - prev.start_total_eval;
+  // 손익으로 설명되는 부분(직전 스냅샷일 이후 확정 손익)
+  const explained = readLog(dataDir, 'captive_ledger')
+    .filter((r) => r.account_type === 'real' && r.trade_date >= prev.snapshot_date && r.trade_date < date)
+    .reduce((s, r) => s + r.realized_pnl, 0);
+  const unexplained = diff - explained;
+  if (Math.abs(unexplained) < 1000) return; // 잡음 무시
+  ledger.append('flow_pending', {
+    id: crypto.randomUUID(), date, amount: unexplained,
+    prev_total: prev.start_total_eval, today_total: today.start_total_eval, explained_pnl: explained,
+    status: 'awaiting_confirm',
+    note: '입출금 추정 — 군주 확인 후 benchmark.recordFlow로 확정(자동 확정 금지)',
+    created_at: new Date().toISOString(),
+  }, opts);
+}
+
+// --- 주 첫 거래일 판정(출사표 002 지시 2): 월요일, 월요일 휴장이면 그 주 첫 거래일 ---
+function isFirstTradingDayOfWeek(dateStr, opts) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const dow = d.getDay(); // 1=월
+  if (dow === 0 || dow === 6) return false;
+  for (let i = 1; i < dow; i++) {
+    const e = new Date(d.getTime() - i * 24 * 3600 * 1000);
+    const s = `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')}`;
+    if (calendar.isTradingDay(s, opts)) return false; // 이번 주 앞선 거래일 존재
+  }
+  return true;
+}
+
+// 직전 주(월~일) 구간의 수익률 — 기준선(benchmark 원장)·우리(실전 스냅샷)
+function weekRangeBefore(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const dow = d.getDay() === 0 ? 7 : d.getDay();
+  const thisMonday = new Date(d.getTime() - (dow - 1) * 24 * 3600 * 1000);
+  const prevMonday = new Date(thisMonday.getTime() - 7 * 24 * 3600 * 1000);
+  const prevSunday = new Date(thisMonday.getTime() - 1 * 24 * 3600 * 1000);
+  const fmt = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  return { from: fmt(prevMonday), to: fmt(prevSunday) };
+}
+
+function runWeeklyExcess(date, opts) {
+  const dataDir = paths.resolveDataDir(opts);
+  const { from, to } = weekRangeBefore(date);
+  const bench = readLog(dataDir, 'benchmark').filter((r) => r.date >= from && r.date <= to && r.real_value != null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const snaps = readLog(dataDir, 'daily_account_snapshot')
+    .filter((r) => r.account_type === 'real' && r.snapshot_date >= from && r.snapshot_date <= to)
+    .sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
+  if (bench.length < 2 || snaps.length < 2) {
+    ledger.append('weekly_excess_log', {
+      id: crypto.randomUUID(), week_from: from, week_to: to, skipped: 'no_data', created_at: new Date().toISOString(),
+    }, opts);
+    return { skipped: true };
+  }
+  const pct = (a, b) => ((b - a) / a) * 100;
+  const benchPct = pct(bench[0].real_value, bench[bench.length - 1].real_value);
+  const oursPct = pct(snaps[0].start_total_eval, snaps[snaps.length - 1].start_total_eval);
+  const excess = Math.round((oursPct - benchPct) * 10) / 10;
+
+  const st = state.read('weekly_excess', opts) || { values: [] };
+  st.values.push(excess);
+  state.write('weekly_excess', st, opts);
+  ledger.append('weekly_excess_log', {
+    id: crypto.randomUUID(), week_from: from, week_to: to,
+    bench_pct: Math.round(benchPct * 10) / 10, ours_pct: Math.round(oursPct * 10) / 10, excess_pp: excess,
+    created_at: new Date().toISOString(),
+  }, opts);
+  return { excess, warn: benchmark.warn4Weeks(st.values) };
+}
+
+// --- 회군 감지(출사표 002 지시 3) ---
+// 매도 체결로 포지션 수량이 0 → close + retreat.closeTrade(그림자: shadow=true 기록만). 멱등 키 = 주문번호.
+async function watchRetreats(date, opts) {
+  if (!opts.providers.fills) return;
+  let fillsRows;
+  try {
+    fillsRows = opts.providers.fills(date.replace(/-/g, ''));
+  } catch (e) {
+    return;
+  }
+  if (!Array.isArray(fillsRows) || fillsRows.length === 0) return;
+  const positions = state.read('positions', opts) || [];
+  let changed = false;
+  for (const p of positions) {
+    if (p.status !== 'open') continue;
+    const fill = fillsRows.find((f) => f.symbol === p.symbol && f.side === 'sell' && f.remain === 0 && f.filled >= p.qty);
+    if (!fill) continue;
+    p.status = 'closed';
+    p.closed_at = new Date().toISOString();
+    p.closed_reason = 'sell_filled';
+    changed = true;
+    await retreat.closeTrade({
+      account_type: p.account_type, symbol: p.symbol, trade_date: date,
+      pnl: Math.round((fill.avgFill - p.avg_price) * p.qty),
+      hypothesis_ids: p.hypothesis_ids || [],
+      wall_deadline_respected: date <= p.deadline,
+      violation_count: 0,
+      close_key: fill.odno, // 멱등 키 = 주문번호
+      shadow: true, // 그림자: 기록만(captive 미반영)
+      note: `매도 체결 회군(${fill.avgFill}원 × ${p.qty})`,
+    }, opts);
+  }
+  if (changed) state.write('positions', positions, opts);
+}
+
+// 기한 만료(미매도) — 15:05 점검 회차에서 같은 경로. 기한 이행 실패로 기록.
+async function closeExpiredPositions(date, opts) {
+  const positions = state.read('positions', opts) || [];
+  let changed = false;
+  for (const p of positions) {
+    if (p.status !== 'open' || !p.deadline || p.deadline >= date) continue;
+    let price = p.avg_price;
+    try {
+      price = opts.providers.quote(p.symbol).price;
+    } catch (e) { /* 시세 없으면 평단 기준 0 손익 */ }
+    p.status = 'closed';
+    p.closed_at = new Date().toISOString();
+    p.closed_reason = 'deadline_expired';
+    changed = true;
+    await retreat.closeTrade({
+      account_type: p.account_type, symbol: p.symbol, trade_date: date,
+      pnl: Math.round((price - p.avg_price) * p.qty),
+      hypothesis_ids: p.hypothesis_ids || [],
+      wall_deadline_respected: false, // 기한 내 매도 미이행
+      violation_count: 0,
+      close_key: `deadline:${p.id}:${p.deadline}`,
+      shadow: true,
+      note: `기한 만료(${p.deadline}) 미매도 — 평가 ${price}원 기준`,
+    }, opts);
+  }
+  if (changed) state.write('positions', positions, opts);
+}
+
 // --- 척후 간격(5분) 판단 ---
 function scoutDue(dataDir, date, nowMin, opts) {
   const ticks = readLog(dataDir, 'scout_log').filter((r) => r.type === 'tick' && r.date === date);
@@ -223,11 +369,24 @@ async function runOnce(opts) {
   const openMin = toMin(calendar.openTime(date, opts));
   const closeMin = toMin(calendar.closeTime(date, opts));
 
-  // 08:30 계좌 스냅샷
+  // 08:30 계좌 스냅샷 + 기준선 적립 + 입금 감지(출사표 002)
   if (minutes >= toMin('08:30') && !hasRec(log, 'snapshot_0830', date)) {
     const r = runSnapshot(date, opts);
     logJob(minutes > toMin('08:35') ? 'late' : 'run', 'snapshot_0830', date, opts, r.errors.length ? { errors: r.errors } : {});
     ran.push('snapshot_0830');
+
+    // 기준선: KODEX 200 전일 KRX 종가(공급자 주입) → recordDay(멱등·결측 표시)
+    if (opts.providers.kodexClose) {
+      try {
+        const bar = opts.providers.kodexClose();
+        benchmark.recordDay({ date: bar.date, close: bar.close, source: bar.source, missing: bar.missing }, opts);
+      } catch (e) {
+        logJob('note', 'benchmark_0830', date, opts, { note: `기준선 적립 생략: ${e.message}` });
+      }
+    }
+    // 입금 감지: 직전 스냅샷 대비 총평가 변동 중 손익(captive)으로 설명되지 않는 부분 —
+    // 감지만 하고 군주 확인 대기로 기록(자동 recordFlow 금지 — 출사표 002 지시 1)
+    detectUnexplainedFlow(date, opts);
   }
 
   // 08:31 군의(수집→판정→스냅샷→보고) + sox 3일 창 갱신 + PC 알림
@@ -242,6 +401,21 @@ async function runOnce(opts) {
     });
     logJob(minutes > toMin('08:36') ? 'late' : 'run', 'council_0831', date, opts, { file: c.reportFile });
     ran.push('council_0831');
+  }
+
+  // 월요일(휴장이면 주 첫 거래일) 주간 초과수익 적립 + 4주 연속 경고(출사표 002)
+  if (minutes >= toMin('08:35') && isFirstTradingDayOfWeek(date, opts) && !hasRec(log, 'weekly_monday', date)) {
+    const w = runWeeklyExcess(date, opts);
+    if (w.warn) {
+      await send(opts, { kind: 'benchmark_warn', title: '기준선 경고', body: '4주 연속 초과수익 마이너스 — 지수 보유보다 못함' });
+    }
+    logJob('run', 'weekly_monday', date, opts, w.skipped ? { skipped: 'no_data' } : { excess_pp: w.excess });
+    ran.push('weekly_monday');
+  }
+
+  // 회군 감지: 매도 체결로 포지션 0 → closeTrade(그림자 기록만, 멱등 키)
+  if (minutes >= openMin && minutes <= closeMin + 30) {
+    await watchRetreats(date, opts);
   }
 
   // 장중 5분 척후 → [액션 필요] 보고 시 insight(판정 필요), 성벽 '이탈'은 advise(기준2)
@@ -281,6 +455,9 @@ async function runOnce(opts) {
     }
     logJob('run', 'preclose_1505', date, opts, { items: r.items.length });
     ran.push('preclose_1505');
+
+    // 기한 만료(미매도) 포지션 → 같은 회군 경로(기한 이행 실패 기록 — 출사표 002)
+    await closeExpiredPositions(date, opts);
   }
 
   // 15:40 Aside 대조 기록(읽기 전용) + 누적 리포트

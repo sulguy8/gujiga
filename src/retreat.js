@@ -11,12 +11,29 @@
 //
 // 근거 인용(rationale_cited) 판정은 citable 가설 기준 — rule만 인용한 거래는 근거 없음(요행/실패 축).
 
+const fs = require('node:fs');
+const path = require('node:path');
 const crypto = require('node:crypto');
 
 const ledger = require('./ledger');
 const state = require('./state');
 const hyp = require('./hypothesis');
 const captives = require('./captives');
+const paths = require('./paths');
+
+// 멱등 키 조회: 같은 체결(close_key)로 두 번 기록되지 않게(출사표 002 지시 3)
+function closeKeyExists(key, opts) {
+  if (!key) return false;
+  const d = paths.ledgerDir(paths.resolveDataDir(opts), 'trade_result');
+  if (!fs.existsSync(d)) return false;
+  for (const f of fs.readdirSync(d)) {
+    if (!f.endsWith('.jsonl')) continue;
+    for (const line of fs.readFileSync(path.join(d, f), 'utf8').split('\n')) {
+      if (line.trim() && JSON.parse(line).close_key === key) return true;
+    }
+  }
+  return false;
+}
 
 // input: {
 //   account_type('real'|'paper'), symbol, trade_date, pnl(원, 확정),
@@ -28,6 +45,10 @@ async function closeTrade(input, opts) {
   if (!input || !['real', 'paper'].includes(input.account_type)) throw new Error('account_type는 real/paper');
   if (!input.trade_date) throw new Error('trade_date 필수');
   if (typeof input.pnl !== 'number') throw new Error('pnl(확정 손익) 필수');
+  // 멱등: 같은 체결(close_key)은 1회만
+  if (input.close_key && closeKeyExists(input.close_key, opts)) {
+    return { skipped: true, reason: 'duplicate_close_key' };
+  }
 
   const ids = Array.isArray(input.hypothesis_ids) ? input.hypothesis_ids : [];
   const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
@@ -47,6 +68,7 @@ async function closeTrade(input, opts) {
     hypothesis_ids: ids.length ? ids : null,
     order_log_id: input.order_log_id || null,
     draft_id: input.draft_id || null,
+    close_key: input.close_key || null,
     shadow: input.shadow === true,
     created_at: new Date().toISOString(),
   };
