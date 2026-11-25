@@ -1,0 +1,6 @@
+{
+  "_comment": "군사 엔진 LLM 호출 상한 설정 (ARC-007 확정). 설정 파일로 관리 — 수치 조정에 배포 불필요.",
+  "daily_max": 8,
+  "breakdown": { "counsel": 1, "preclose": 1, "scout_action_max": 6 },
+  "owner_chat_counts_separately": true
+}
