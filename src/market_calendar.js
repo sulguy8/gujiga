@@ -37,6 +37,13 @@ function openTime(dateStr, opts) {
   return cal.default_open || '09:00';
 }
 
+// 그날의 폐장 시각('HH:MM'). 수능일(16:30) 등 변경일은 special_close에서.
+function closeTime(dateStr, opts) {
+  const cal = load(opts);
+  if (cal.special_close && cal.special_close[dateStr]) return cal.special_close[dateStr];
+  return cal.default_close || '15:30';
+}
+
 // dateStr 이전의 가장 가까운 거래일('YYYY-MM-DD').
 function prevTradingDay(dateStr, opts) {
   let d = new Date(`${dateStr}T00:00:00`);
@@ -55,4 +62,4 @@ function fmt(d) {
   return `${y}-${m}-${dd}`;
 }
 
-module.exports = { isTradingDay, openTime, prevTradingDay, load };
+module.exports = { isTradingDay, openTime, closeTime, prevTradingDay, load };

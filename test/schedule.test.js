@@ -270,11 +270,36 @@ test('에지: 08:29는 실행 전, 09:00 지각 기동은 1회 생성 + 지연 �
   }
 });
 
-// ===== 캘린더 파일 자체 검증: 2026~2027 초안 + 군주 확인 필요 표시 =====
-test('캘린더 파일: 2026~2027 초안과 군주 확인 필요 표시가 있다', () => {
+// ===== 캘린더 파일 자체 검증: 2026~2027 확정 반영 + 잔여 보류 표시 =====
+test('캘린더 파일: KRX 확정 휴장일 반영 + 잔여 보류 표시', () => {
   const raw = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'market_calendar.json'), 'utf8'));
-  assert.ok(raw.holidays['2026-01-01'], '신정 2026');
-  assert.ok(raw.holidays['2026-12-25'], '성탄절 2026');
-  assert.ok(raw.holidays['2027-01-01'], '신정 2027');
-  assert.match(JSON.stringify(raw), /군주 확인 필요/, '군주 확인 필요 표시');
+  // 2026 추가 확정분
+  assert.ok(raw.holidays['2026-05-01'], '근로자의 날 2026');
+  assert.ok(raw.holidays['2026-06-03'], '지방선거 2026');
+  assert.ok(raw.holidays['2026-07-17'], '제헌절 2026');
+  // 2027 KRX 달력 16일
+  const h2027 = Object.keys(raw.holidays).filter((d) => d.startsWith('2027-'));
+  assert.equal(h2027.length, 16, '2027 휴장일 16일');
+  for (const d of ['2027-02-08', '2027-02-09', '2027-05-03', '2027-05-13', '2027-07-19', '2027-09-15', '2027-12-27', '2027-12-31']) {
+    assert.ok(raw.holidays[d], `2027 ${d}`);
+  }
+  // special_open/close
+  assert.equal(raw.special_open['2026-01-02'], '10:00');
+  assert.equal(raw.special_open['2026-11-19'], '10:00', '수능 개장 지연');
+  assert.equal(raw.special_close['2026-11-19'], '16:30', '수능 폐장 연장');
+  assert.equal(raw.special_open['2027-01-04'], '10:00');
+  // 9/26 대체공휴일 보류 항목은 삭제됨(확정: 없음)
+  assert.ok(!JSON.stringify(raw._pending_confirmation).includes('9/26'), '9/26 보류 삭제');
+  // 잔여 보류(2027 수능일)는 유지
+  assert.match(JSON.stringify(raw), /군주 확인 필요|재확인/, '잔여 보류 표시');
+  // 출처 주석
+  assert.match(raw._comment, /2026-11-25 군사 대조/, '출처 기록');
+});
+
+test('캘린더: 수능일 개장·폐장 시각 조회(closeTime)', () => {
+  assert.equal(calendar.openTime('2026-11-19'), '10:00');
+  assert.equal(calendar.closeTime('2026-11-19'), '16:30');
+  assert.equal(calendar.closeTime('2026-11-25'), '15:30', '평일 기본 폐장');
+  assert.equal(calendar.isTradingDay('2026-06-03'), false, '선거일 휴장');
+  assert.equal(calendar.isTradingDay('2027-09-15'), false, '추석 2027 휴장');
 });
