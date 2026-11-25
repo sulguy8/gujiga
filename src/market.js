@@ -166,6 +166,9 @@ async function collect(opts) {
   if (reentry && reentry.sox_base_low != null) {
     judgeInputs.sox_base_low = reentry.sox_base_low;
     judgeInputs.sox_base_low_date = reentry.sox_base_low_date || null;
+    // SOX 최근 3거래일 최저도 재진입 기록(장부)에서 — 루틴이 갱신, 없으면 신호 3 보수 꺼짐
+    judgeInputs.sox_recent3_low = reentry.sox_recent3_low != null ? reentry.sox_recent3_low : null;
+    if (judgeInputs.sox_recent3_low == null) missing.push('sox_recent3_low');
   } else {
     missing.push('sox_base_low');
   }
