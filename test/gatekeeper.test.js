@@ -79,7 +79,7 @@ function writeGuard(dir, over) {
 }
 
 // 게이트 경유 주문의 성립 출사표용 공통 opt(5항목 — 출사표 없는 출병 금지)
-const DRAFT_OPT = { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: '관문 테스트', hypothesis_ids: ['HYP-FIX-V'] };
+const DRAFT_OPT = { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: '관문 테스트', hypothesis_ids: ['HYP-FIX-V'], nation: 'chok' };
 
 async function boot(over) {
   const dir = makeTmpDir();
@@ -229,7 +229,7 @@ test('이중 잠금: guard_config 없으면 모의 주문도 차단(안전 쪽 �
   const gate = await gatekeeper.start({ dataDir: dir, keysPath, port: 0, tokenFile, baseUrls: { mock: mockSrv.url, real: mockSrv.url }, gapMs: 30 });
   try {
     const tok = fs.readFileSync(tokenFile, 'utf8').trim();
-    const r = await call(gate.port, tok, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: 'x', hypothesis_ids: ['HYP-FIX-V'] }] });
+    const r = await call(gate.port, tok, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: 'x', hypothesis_ids: ['HYP-FIX-V'], nation: 'chok' }] });
     assert.equal(r.json.ok, false, 'guard 부재 차단');
     assert.equal(mockSrv.received.length, 0);
   } finally {
@@ -353,7 +353,7 @@ test('클라이언트: make("mock") → price/balance가 기존 형태로 동작
     const b = await api.balance();
     assert.equal(b.total, 1000000);
     // 모의 주문 → 접수 + Aside 쪽 order_log.jsonl 기록(기존 안전장치·로그 유지)
-    const o = await api.order('buy', '005930', 3, 61500, { reason: 'tst', stop_price: 59000, target_price: 66000, deadline: '2026-12-10', hypothesis_ids: ['HYP-FIX-V'] });
+    const o = await api.order('buy', '005930', 3, 61500, { reason: 'tst', stop_price: 59000, target_price: 66000, deadline: '2026-12-10', hypothesis_ids: ['HYP-FIX-V'], nation: 'chok' });
     assert.equal(o.odno, '0000117057');
     const log = fs.readFileSync(path.join(root, 'trading', 'order_log.jsonl'), 'utf8').trim().split('\n');
     assert.equal(log.length, 1, '클라이언트 order_log 기록 유지');

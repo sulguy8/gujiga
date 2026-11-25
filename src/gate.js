@@ -137,6 +137,12 @@ async function runChecks(draft, env, api, opts) {
     }
   }
 
+  // ②-보강(TSK-023 / REQ-009 AC1): 모의 '매수'는 nation 필수 — 무소속 체결 0 보장.
+  // 매도는 제외(회군 보장 — 잔존 포지션 정리까지 막지 않는다).
+  if (env !== 'real' && isBuy && !['chok', 'wi', 'o'].includes(draft.nation)) {
+    return { reason: 'no_nation', detail: { nation: draft.nation || null, note: '모의 매수는 나라(촉·위·오) 귀속 필수' } };
+  }
+
   // ③ 사용자 확인(실전) — AI 단독 주문 구조적 불가(REQ-002)
   if (env === 'real' && draft.user_confirmed !== true) return { reason: 'no_confirm', detail: {} };
 

@@ -74,7 +74,7 @@ async function down(s) { await s.srv.close(); rm(s.dir); }
 // troops명 매수 초안(모의) — 1만원=1명이 되도록 qty×price = troops×10000
 function draft(troops, hypIds, over) {
   return Object.assign({
-    account_type: 'paper', nation: null, symbol: '005930', side: 'buy',
+    account_type: 'paper', nation: 'chok', symbol: '005930', side: 'buy',
     entry_low: 10000, entry_high: 10000, stop_price: 9000, target_price: 12000,
     deadline: '2026-12-05', troops,
     qty: troops, price: 10000, user_confirmed: true, created_by: 'human', reason: '근거 검사 테스트',
@@ -175,7 +175,8 @@ test('경계: 태수 검증 중 15 통과·16 차단 / 승상 재량(가설만 1
     assert.equal((await gate.submit(draft(15, ['HYP-T']), s.opts)).ok, true, '태수 절반 15');
     assert.equal((await gate.submit(draft(16, ['HYP-T']), s.opts)).reason, 'grade_cap');
     generalRank.promote('seungsang', { dataDir: s.dir });
-    assert.equal((await gate.submit(draft(40, ['HYP-T']), s.opts)).ok, true, '승상 검증 중 재량');
+    // 승상 재량이라도 세력전 종목당 25만(TSK-023)은 별도 상한 — 25명(25만)으로 재량 입증
+    assert.equal((await gate.submit(draft(25, ['HYP-T']), s.opts)).ok, true, '승상 검증 중 재량');
     assert.equal((await gate.submit(draft(11, ['HYP-H']), s.opts)).reason, 'grade_cap', '가설은 승상도 10명');
   } finally {
     await down(s);

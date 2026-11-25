@@ -61,6 +61,7 @@ async function closeTrade(input, opts) {
     id: crypto.randomUUID(),
     date: input.trade_date, trade_date: input.trade_date,
     account_type: input.account_type, symbol: input.symbol || null,
+    nation: input.nation || null, // 세력전 귀속(TSK-023 — 나라별 논공행상 집계용)
     pnl: input.pnl,
     rationale_cited: citable.length >= 1,
     wall_deadline_respected: input.wall_deadline_respected === true,
