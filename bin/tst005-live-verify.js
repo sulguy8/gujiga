@@ -23,7 +23,14 @@ const state = require('../src/state');
 const ledger = require('../src/ledger');
 const paths = require('../src/paths');
 
-const DATA = path.join(os.homedir(), 'gujiga-data-tst006');
+// 시험 격리(지령 008): 실행마다 새 증거 폴더에서 빈 상태로 시작 — 같은 날 재실행 때
+// 이전 실행의 포로일(15번) 기록이 남아 11~14번이 전부 revenge로 오염되는 문제 방지.
+// 이전 실행 폴더는 지우지 않는다(증거 보존).
+function runStamp() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return d.toISOString().slice(0, 19).replace(/-/g, '').replace(/:/g, '').replace('T', '-');
+}
+const DATA = path.join(os.homedir(), 'gujiga-data-tst006', runStamp());
 // gapMs 600: 연속 잔고·일봉 조회의 초당 거래건수 제한(EGW00201)으로 조회가 실패하면
 // ration30 '안전 차단'이 떠서 재현 라벨이 어긋난다(1차 실행 13번 불일치의 유력 원인).
 const opts = { dataDir: DATA, keysPath: process.env.GUJIGA_KIS_KEYS || 'C:\\Users\\조용수\\.aside\\u\\1\\secrets\\kis.json.enc', gapMs: 600 };
@@ -133,6 +140,7 @@ async function expectBlock(label, draft, wantReason) {
 
 (async () => {
   seed();
+  say(`증거 폴더(시험 격리 — 실행마다 새로): ${DATA}`);
   const tokenRowsBefore = readL('token_log').length;
 
   // --- 네트워크 이전 단계(①~⑤ 한도) — 호출 0 구간 ---

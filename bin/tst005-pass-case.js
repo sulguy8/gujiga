@@ -19,9 +19,35 @@ const path = require('node:path');
 const gate = require('../src/gate');
 const state = require('../src/state');
 
-const DATA = path.join(os.homedir(), 'gujiga-data-tst006');
-const opts = { dataDir: DATA, keysPath: process.env.GUJIGA_KIS_KEYS || 'C:\\Users\\조용수\\.aside\\u\\1\\secrets\\kis.json.enc' };
+// 시험 격리(지령 008): 전수 검증기와 같은 방식 — 실행마다 새 증거 폴더(빈 상태).
+// 이전 실행의 포로일 기록 등에 오염되지 않는다. 이전 폴더는 지우지 않는다(증거).
+function runStamp() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return d.toISOString().slice(0, 19).replace(/-/g, '').replace(/:/g, '').replace('T', '-') + '-pass';
+}
+const DATA = path.join(os.homedir(), 'gujiga-data-tst006', runStamp());
+const opts = { dataDir: DATA, keysPath: process.env.GUJIGA_KIS_KEYS || 'C:\\Users\\조용수\\.aside\\u\\1\\secrets\\kis.json.enc', gapMs: 600 };
 const SYMBOL = '069500'; // KODEX 200
+
+function seed() {
+  fs.mkdirSync(path.join(DATA, 'secrets'), { recursive: true });
+  // 토큰 캐시 재사용(gujiga-data → 검증 폴더 복사, 값은 읽지 않음)
+  const src = path.join(os.homedir(), 'gujiga-data', 'secrets');
+  for (const f of ['token_kis_token_mock.enc', 'token_kis_token_real.enc']) {
+    const p = path.join(src, f);
+    if (fs.existsSync(p)) fs.copyFileSync(p, path.join(DATA, 'secrets', f));
+  }
+  state.write('guard_config', {
+    id: 'default', per_order_limit_real: 200000, per_order_limit_paper: 500000,
+    daily_loss_limit: -50000, stop_file_path: path.join(DATA, 'STOP'),
+    cash_ratio_min: 0.3, correlation_max: 0.7, sample_min: 10, updated_at: new Date().toISOString(),
+  }, opts);
+  state.write('hypothesis_book', { items: [
+    { id: 'HYP-V', code: 'V', category: 'A', statement: '검증됨 더미', status: 'verified', citable: true, evidence_count: 12, trade_count: 4, reference_only: false, created_at: 'x' },
+  ] }, opts);
+  state.write('general_rank', { id: 'me', rank: 'taesu', per_stock_troops_max: 30, concurrent_max: 2, sortie_count: 0, clean_weeks: 0, review_weeks: 0, promoted_at: null, updated_at: 'x' }, opts);
+  state.write('positions', [], opts);
+}
 
 function kstMinutes() {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
@@ -38,13 +64,8 @@ function tickFloor(p) {
     console.log('장 시작 전(09:05 이전) — 실행하지 않음. 내일 09:05 이후 다시.');
     process.exit(1);
   }
-  if (!fs.existsSync(path.join(DATA, 'state'))) {
-    console.log('검증 폴더 미준비 — 먼저 node bin/tst005-live-verify.js 를 실행해 시드하라.');
-    process.exit(1);
-  }
-  // 포로일 시드(전수 검증의 revenge 재현용)가 남아 있으면 통과 대조군이 막힌다 — 안내 후 중단
-  const posFree = (state.read('positions', opts) || []).filter((p) => p.status === 'open');
-  console.log(`보유 성 ${posFree.length}개 (세력전 동시 2성 한도 내 확인)`);
+  seed();
+  console.log(`증거 폴더(시험 격리): ${DATA}`);
 
   const q = await gate.query('mock', 'price', [SYMBOL], opts);
   if (!q || !q.price) {
