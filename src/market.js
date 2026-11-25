@@ -99,7 +99,11 @@ async function overnightWeb(date, opts) {
   return out;
 }
 
-// ④ 외국인 순매수 — TR FHPTJ04040000 확정(군주 2026-11-25). 응답 '필드명'은 실관찰 확인 전 — '미검증' 태그.
+// ④ 외국인 순매수 — TR FHPTJ04040000 확정(군주 2026-11-25).
+// 필드명(frgn_ntby_tr_pbmn)은 2026-11-25 실관찰로 **확인됨**(지령 007 — 필드 태그 해제).
+// 날짜 파라미터 수정(기준일=오늘)은 다음 실관찰에서 최신일 확인 전까지 '(미검증-날짜)' —
+// 그때까지 신호 4번은 결측 처리(보수 꺼짐). 확인되면 아래 상수를 true로(지령으로만 변경).
+const FOREIGN_DATE_VERIFIED = false;
 // 연속 일수: 최신일의 순매수 부호가 이어지는 일수(순매도면 음수).
 async function investorKis(opts) {
   const rows = await gate.query('real', 'investorDaily', [10], opts); // 최신 먼저
@@ -149,14 +153,19 @@ async function collect(opts) {
     missing.push('night_future_pct', 'us_summary');
   }
 
-  // ④ 외국인 — TR 확정, 필드명 미검증 태그. 실패 시 결측(대체 금지)
+  // ④ 외국인 — 필드명 확인됨(실관찰 2026-11-25). 날짜 수정 확인 전엔 결측 처리(보수 꺼짐).
   const unverified = [];
   try {
     const inv = await investorKis(opts);
-    judgeInputs.foreign_net_days = inv.net_days;
-    judgeInputs.foreign_unverified = true; // 신호 4번 근거에 (미검증) 표기
-    sources.foreign_net_days = 'kis_investor';
-    unverified.push('foreign_net_days');
+    if (FOREIGN_DATE_VERIFIED) {
+      judgeInputs.foreign_net_days = inv.net_days;
+      sources.foreign_net_days = 'kis_investor';
+    } else {
+      // (미검증-날짜): 값은 받았어도 판정에 넣지 않는다 — 결측과 같은 보수 동작
+      judgeInputs.foreign_date_unverified = true;
+      missing.push('foreign_net_days');
+      unverified.push('foreign_net_days(미검증-날짜)');
+    }
   } catch (e) {
     missing.push('foreign_net_days');
   }

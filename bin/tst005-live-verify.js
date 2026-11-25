@@ -9,7 +9,9 @@
 //    새 발급이 일어나면 token_log 수로 드러난다(보고 항목). 키·토큰 값 출력 0.
 //  - 증거 보존: 전용 데이터 폴더 %USERPROFILE%\gujiga-data-tst006 (본 장부 오염 0).
 //
-// 사용: node bin/tst005-live-verify.js
+// 사용: node bin/tst005-live-verify.js [출력번호]
+//  - 결과는 콘솔과 함께 _campaign/reports/<번호>-live-output.md 에 UTF-8로 직접 쓴다
+//    (PowerShell 리디렉션 한글 깨짐 방지 — 지령 007). 번호 기본값 007.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -22,8 +24,26 @@ const ledger = require('../src/ledger');
 const paths = require('../src/paths');
 
 const DATA = path.join(os.homedir(), 'gujiga-data-tst006');
-const opts = { dataDir: DATA, keysPath: process.env.GUJIGA_KIS_KEYS || 'C:\\Users\\조용수\\.aside\\u\\1\\secrets\\kis.json.enc' };
+// gapMs 600: 연속 잔고·일봉 조회의 초당 거래건수 제한(EGW00201)으로 조회가 실패하면
+// ration30 '안전 차단'이 떠서 재현 라벨이 어긋난다(1차 실행 13번 불일치의 유력 원인).
+const opts = { dataDir: DATA, keysPath: process.env.GUJIGA_KIS_KEYS || 'C:\\Users\\조용수\\.aside\\u\\1\\secrets\\kis.json.enc', gapMs: 600 };
 const STOP = path.join(DATA, 'STOP');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 결과를 UTF-8 파일에 직접 기록(지령 007 — 리디렉션 한글 깨짐 방지)
+const OUT_NO = (process.argv[2] || '007').replace(/[^0-9]/g, '') || '007';
+const OUT_PATH = path.join(__dirname, '..', '_campaign', 'reports', `${OUT_NO}-live-output.md`);
+const outLines = [];
+function say(line) {
+  console.log(line);
+  outLines.push(line);
+}
+function flushOut() {
+  try {
+    fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
+    fs.writeFileSync(OUT_PATH, `# TST-005 실계좌 전수 검증 출력 (${new Date().toISOString()})\n\n` + outLines.join('\n') + '\n', 'utf8');
+  } catch (e) { console.log('출력 파일 기록 실패:', e.message); }
+}
 
 function kstToday() {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
@@ -100,7 +120,15 @@ async function expectBlock(label, draft, wantReason) {
   const got = r.reason || (r.error ? `error:${r.error}` : (r.ok ? 'PASSED(!)' : '?'));
   const ok = r.blocked === true && (wantReason instanceof RegExp ? wantReason.test(r.reason) : r.reason === wantReason);
   results.push({ label, want: String(wantReason), got, ok, detail: r.detail || null });
-  console.log(`${ok ? 'OK ' : 'XX '} ${label}: ${got}${r.detail && r.detail.corr != null ? ` corr=${r.detail.corr}` : ''}${r.detail && r.detail.cash_after_pct != null ? ` cash_after=${r.detail.cash_after_pct}%` : ''}`);
+  // detail의 note까지 출력 — '잔고 조회 실패(안전 차단)' 같은 원인 구분용(지령 007)
+  const extra = [
+    r.detail && r.detail.corr != null ? `corr=${r.detail.corr}` : null,
+    r.detail && r.detail.cash_after_pct != null ? `cash_after=${r.detail.cash_after_pct}%` : null,
+    r.detail && r.detail.note ? `note=${r.detail.note}` : null,
+    r.detail && r.detail.kind ? `kind=${r.detail.kind}` : null,
+  ].filter(Boolean).join(' ');
+  say(`${ok ? 'OK ' : 'XX '} ${label}: ${got}${extra ? ' ' + extra : ''}`);
+  await sleep(700); // 초당 거래건수 제한 회피(연속 잔고 조회 간격)
 }
 
 (async () => {
@@ -122,13 +150,18 @@ async function expectBlock(label, draft, wantReason) {
   await expectBlock('9 1회 한도(실전 21만)', paperDraft({ account_type: 'real', troops: 21, qty: 21 }), 'per_order_limit');
 
   // --- VTS 잔고·일봉 실호출 구간(⑥) ---
-  // 10 군량 30%: 모의계좌 실잔고로는 30% 밑으로 못 내리므로 기준만 0.999999로 올려 같은 식 재현
-  const g = state.read('guard_config', opts);
-  g.cash_ratio_min = 0.999999;
-  state.write('guard_config', g, opts);
-  await expectBlock('10 군량 30%(기준 상향 재현, 실잔고)', paperDraft(), 'ration30');
-  g.cash_ratio_min = 0.3;
-  state.write('guard_config', g, opts);
+  // 10 군량 30%: 모의계좌 실잔고로는 30% 밑으로 못 내리므로 기준만 0.999999로 올려 같은 식 재현.
+  // try/finally로 원복 보장(지령 007 — 이후 사례가 ration30으로 오염되는 일 방지).
+  try {
+    const g = state.read('guard_config', opts);
+    g.cash_ratio_min = 0.999999;
+    state.write('guard_config', g, opts);
+    await expectBlock('10 군량 30%(기준 상향 재현, 실잔고)', paperDraft(), 'ration30');
+  } finally {
+    const g2 = state.read('guard_config', opts);
+    g2.cash_ratio_min = 0.3;
+    state.write('guard_config', g2, opts);
+  }
 
   // 11 상관 0.7: 보유 069500(KODEX 200) 중 102110(TIGER 200) 매수 — 실일봉 피어슨
   state.write('positions', [{ id: 'p1', account_type: 'paper', nation: 'chok', symbol: '069500', qty: 1, avg_price: 10000, stop_price: 8000, target_price: 15000, deadline: '2026-12-10', status: 'open' }], opts);
@@ -151,46 +184,54 @@ async function expectBlock(label, draft, wantReason) {
 
   // 16 하루 손실(실전 전용): 실전 '잔고' 조회가 필요한데 지령 허용 목록 밖 → 보류
   results.push({ label: '16 하루 손실(실전 전용)', want: 'daily_loss', got: '보류(실전 잔고 조회 필요 — 허용 목록 밖, 군주 결정)', ok: null });
-  console.log('-- 16 하루 손실: 보류(실전 잔고 조회 필요 — 허용 목록 밖)');
+  say('-- 16 하루 손실: 보류(실전 잔고 조회 필요 — 허용 목록 밖)');
 
-  // --- 증권사 쪽 증거: 모의계좌 당일 주문 내역 0건 ---
+  // --- 증권사 쪽 증거: 모의계좌 당일 주문 내역(러너 주문 0건 — 주문번호 대조용 전 행 출력) ---
   let fills = null;
   try {
     fills = await gate.query('mock', 'fills', [TODAY8], opts);
-    console.log(`모의계좌 당일 주문·체결 내역: ${fills.rows.length}건 (rt=${fills.rt})`);
+    say(`모의계좌 당일 주문·체결 내역: ${fills.rows.length}건 (rt=${fills.rt})`);
+    for (const row of fills.rows) {
+      say(`  주문번호 ${row.odno} | ${row.side} | ${row.symbol || row.name} | ${row.ordQty}주@${row.ordPrice} | 취소 ${row.cancelled} | ${row.time}`);
+    }
   } catch (e) {
-    console.log('모의 체결조회 실패:', e.message);
+    say('모의 체결조회 실패: ' + e.message);
   }
 
-  // --- 상관 경계 기록: 실일봉 2종목 피어슨(실전 도메인 '일봉' 조회 — 허용) ---
-  const pairs = [['069500', '102110'], ['069500', '005930']];
+  // --- 상관 경계 기록: 실일봉 피어슨(실전 도메인 '일봉' 조회 — 허용) ---
+  // 153130(KODEX 단기채권)은 0.7 아래 대조군(지령 007 — 경계 양쪽을 다 본다)
+  const pairs = [['069500', '102110'], ['069500', '005930'], ['069500', '153130']];
   for (const [a, b] of pairs) {
     try {
       const ca = await gate.query('real', 'dailyCandle', [a, 120], opts);
+      await sleep(600);
       const cb = await gate.query('real', 'dailyCandle', [b, 120], opts);
+      await sleep(600);
       const r = pearson(returnsOf(ca.map((x) => x.close)), returnsOf(cb.map((x) => x.close)));
       const n = Math.min(ca.length, cb.length) - 1;
-      console.log(`상관(실일봉): ${a}×${b} = ${r.toFixed(4)} (표본 ${n}) → ${r >= 0.7 ? '차단권' : '통과권'}`);
+      say(`상관(실일봉): ${a}×${b} = ${r.toFixed(4)} (표본 ${n}) → ${r >= 0.7 ? '차단권(>=0.7)' : '통과권(<0.7)'}`);
       results.push({ label: `상관 경계 ${a}×${b}`, want: 'measure', got: r.toFixed(4), ok: true });
     } catch (e) {
-      console.log(`상관 측정 실패 ${a}×${b}:`, e.message);
+      say(`상관 측정 실패 ${a}×${b}: ` + e.message);
     }
   }
 
-  // --- 실관찰: 지수 일봉 U·0001, 투자자 동향 필드명 ---
+  // --- 실관찰: 지수 일봉 U·0001, 투자자 동향 필드명·최신일 ---
   try {
     const idx = await gate.query('real', 'dailyIndexCandle', ['0001', 30], opts);
     const last = idx[idx.length - 1];
-    console.log(`지수 일봉(FHKUP03500100 U·0001): ${idx.length}행, 최신 ${last.date} 종가 ${last.close} (source=${last.source})`);
+    say(`지수 일봉(FHKUP03500100 U·0001): ${idx.length}행, 최신 ${last.date} 종가 ${last.close} (source=${last.source})`);
   } catch (e) {
-    console.log('지수 일봉 실패:', e.message);
+    say('지수 일봉 실패: ' + e.message);
   }
+  await sleep(600);
   try {
     const inv = await gate.query('real', 'investorDaily', [10], opts);
     const fieldSet = [...new Set(inv.map((x) => x.field))];
-    console.log(`투자자 동향(FHPTJ04040000): ${inv.length}행, 외국인 필드 = ${fieldSet.join(',')}, 최신 ${inv[0] && inv[0].date} 값 ${inv[0] && inv[0].foreignNet}`);
+    say(`투자자 동향(FHPTJ04040000): ${inv.length}행, 외국인 필드 = ${fieldSet.join(',')}, 최신 ${inv[0] && inv[0].date} 값 ${inv[0] && inv[0].foreignNet}`);
+    say(`  (최신일이 오늘/전 거래일이면 날짜 파라미터 수정 확인 — '(미검증-날짜)' 해제 판단 자료)`);
   } catch (e) {
-    console.log('투자자 동향 실패:', e.message);
+    say('투자자 동향 실패: ' + e.message);
   }
 
   // --- 전송 0 증명 + 토큰 발급 여부 ---
@@ -198,12 +239,14 @@ async function expectBlock(label, draft, wantReason) {
   const byStatus = {};
   for (const r of ol) byStatus[r.status] = (byStatus[r.status] || 0) + 1;
   const sent = ol.filter((r) => ['submitted', 'filled', 'partial', 'rejected'].includes(r.status));
-  console.log(`order_log: ${JSON.stringify(byStatus)} — 전송 시도 ${sent.length}건`);
+  say(`order_log: ${JSON.stringify(byStatus)} — 전송 시도 ${sent.length}건`);
   const tokenRowsAfter = readL('token_log');
-  console.log(`토큰 신규 발급: ${tokenRowsAfter.length - tokenRowsBefore}건 (env: ${tokenRowsAfter.map((t) => t.env).join(',') || '없음'})`);
+  say(`토큰 신규 발급: ${tokenRowsAfter.length - tokenRowsBefore}건 (env: ${tokenRowsAfter.map((t) => t.env).join(',') || '없음'})`);
 
   const bad = results.filter((r) => r.ok === false);
-  console.log(`\n결과: 재현 ${results.filter((r) => r.ok === true).length} · 보류 ${results.filter((r) => r.ok === null).length} · 불일치 ${bad.length}`);
+  say(`\n결과: 재현 ${results.filter((r) => r.ok === true).length} · 보류 ${results.filter((r) => r.ok === null).length} · 불일치 ${bad.length}`);
   fs.writeFileSync(path.join(DATA, 'verify006_results.json'), JSON.stringify({ date: TODAY, results, order_log_status: byStatus, fills_today: fills ? fills.rows.length : null }, null, 2));
+  flushOut();
+  say(`출력 저장: ${OUT_PATH}`);
   if (bad.length) process.exit(1);
 })();
