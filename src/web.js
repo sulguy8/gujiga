@@ -14,6 +14,10 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const board = require('./camp_board');
+const hypothesis = require('./hypothesis');
+const merit = require('./merit');
+const generalRank = require('./general_rank');
+const paths2 = require('./paths');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'web.json');
 const LOOPBACK = '127.0.0.1';
@@ -138,6 +142,117 @@ function render(data) {
   return H.join('\n');
 }
 
+// ====================== 병법서(SCR-007)·논공행상(SCR-006) — 읽기 전용(TSK-021) ======================
+// 조회는 현황판(62900)에서, '군주 판정 대기' 확정은 관문(62910) POST+CSRF에서만.
+
+const STATUS_KO = { hypothesis: '가설', testing: '검증 중', verified: '검증됨', discarded: '폐기' };
+const QUAD_KO = { merit: '전공', fluke: '요행', honorable_defeat: '명예로운 패배', true_failure: '진짜 실패', draw: '무승부' };
+
+function bar(n, max) {
+  const filled = Math.max(0, Math.min(max, n));
+  return '■'.repeat(filled) + '□'.repeat(Math.max(0, max - filled));
+}
+
+// 등급별 병력 상한(REQ-023와 동일 규칙 — 안내 전용)
+function gradeCapText(status, opts) {
+  const lim = generalRank.getLimits(opts);
+  const base = lim.perStockTroopsMax;
+  const rankLabel = lim.label || lim.rank;
+  if (status === 'verified') return base == null ? `${rankLabel} 기준 재량(전부)` : `${rankLabel} 기준 ${base}명(전부)`;
+  if (status === 'testing') return base == null ? `${rankLabel} 기준 재량` : `${rankLabel} 기준 ${Math.floor(base / 2)}명(절반 버림)`;
+  if (status === 'hypothesis') return '정찰대 10명(고정)';
+  return '출병 불가(폐기)';
+}
+
+function renderHypList(opts) {
+  const items = hypothesis.list(opts);
+  const H = pageHead('병법서 — 가설 장부');
+  H.push('<section><table><tr><th>가설</th><th>분류</th><th>상태</th><th>표본</th><th>출병</th><th></th></tr>');
+  for (const h of items) {
+    H.push(`<tr><td>${esc(h.code)}</td><td>${esc(h.category)}</td><td>${STATUS_KO[h.status] || esc(h.status)}</td>` +
+      `<td class="num">${h.evidence_count}/10</td><td class="num">${h.trade_count}/3</td>` +
+      `<td><a href="/hypothesis?id=${encodeURIComponent(h.id)}">열기</a></td></tr>`);
+  }
+  H.push('</table></section>');
+  H.push('<p class="muted">판정 대기 확정은 관문 창에서: <a href="http://127.0.0.1:' + gatePort() + '/judgments">군주 판정 대기</a></p>');
+  H.push('</main></body></html>');
+  return H.join('\n');
+}
+
+function renderHypDetail(h, opts) {
+  const cfgMin = 10;
+  const tradeMin = 3;
+  const H = pageHead(`병법서 — ${h.code}`);
+  H.push('<section>');
+  H.push(`<h3>${esc(h.code)} <span class="muted">(${STATUS_KO[h.status] || esc(h.status)})</span></h3>`);
+  H.push(`<p>${esc(h.statement)}</p>`);
+  H.push(`<p class="num">표본 진행 ${bar(h.evidence_count, cfgMin)} ${h.evidence_count}/${cfgMin}</p>`);
+  H.push(`<p class="num">출병 증거 ${bar(h.trade_count, tradeMin)} ${h.trade_count}/${tradeMin}</p>`);
+  if (h.evidence_count >= cfgMin && h.trade_count >= tradeMin && h.status === 'testing') {
+    H.push('<p><b>승격 가능</b> — 표본 완료(검증됨 전이는 군주 결정)</p>');
+  }
+  if (h.reference_only) H.push('<p class="muted">참고 수준(표본 10건 미만)</p>');
+  H.push(`<p>판정식: ${h.judge_expr ? `<code>${esc(h.judge_expr)}</code>` : '없음 — 논공행상 군주 판정'}</p>`);
+  H.push(`<p>등급별 병력 상한: ${gradeCapText(h.status, opts)}</p>`);
+  H.push('</section>');
+  // 증거 목록
+  const evs = hypothesis.evidences(h.id, opts);
+  H.push('<section><h3>증거</h3><table><tr><th>날짜</th><th>결과</th><th>종류</th><th>판정</th><th>내용</th></tr>');
+  for (const e of evs) {
+    H.push(`<tr><td>${esc(e.evidence_date)}</td><td>${e.outcome === 'success' ? '적중' : '빗나감'}</td>` +
+      `<td>${e.kind === 'trade' ? '출병' : '관찰'}</td><td>${esc(e.judged_by)}</td><td>${esc(e.note)}</td></tr>`);
+  }
+  H.push('</table></section>');
+  H.push('<p><a href="/hypotheses">목록으로</a></p></main></body></html>');
+  return H.join('\n');
+}
+
+function readTradeResults(opts) {
+  const fsLocal = fs;
+  const d = path.join(paths2.resolveDataDir(opts), 'ledger', 'trade_result');
+  if (!fsLocal.existsSync(d)) return [];
+  const out = [];
+  for (const f of fsLocal.readdirSync(d)) {
+    for (const line of fsLocal.readFileSync(path.join(d, f), 'utf8').split('\n')) {
+      if (line.trim()) out.push(JSON.parse(line));
+    }
+  }
+  return out;
+}
+
+function renderMerit(opts) {
+  const trades = readTradeResults(opts);
+  const r = merit.report(trades);
+  const H = pageHead('논공행상 — 성적표 4분면');
+  H.push('<section><h3>성적표 4분면 (손익 × 근거 준수)</h3>');
+  H.push('<table><tr><th></th><th>준수</th><th>위반</th></tr>');
+  H.push(`<tr><th>수익</th><td class="q-merit">전공 ${r.counts.merit}</td><td class="q-fluke">요행 (경고) ${r.counts.fluke}</td></tr>`);
+  H.push(`<tr><th>손실</th><td class="q-honor">명예로운 패배 <span class="badge" style="background:#1d5c2e">명예</span> ${r.counts.honorable_defeat}</td>` +
+    `<td class="q-fail" style="color:#b3261e">진짜 실패 ${r.counts.true_failure}</td></tr>`);
+  H.push('</table>');
+  H.push(`<p class="num">무승부(0원) ${r.counts.draw}건 · 근거 준수율 ${r.compliantRatePct == null ? '해당 없음' : r.compliantRatePct + '%'} (${r.compliantCount}/${r.total})</p>`);
+  H.push('</section>');
+  // 거래 목록(손익 열과 별도로 분면 표기)
+  H.push('<section><h3>거래별</h3><table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
+  for (const t of trades) {
+    const q = merit.quadrantOf(Object.assign({}, t, { compliant: merit.isCompliant(t) }));
+    const cls = q === 'honorable_defeat' ? 'q-honor' : q === 'true_failure' ? 'q-fail' : `q-${q}`;
+    H.push(`<tr><td>${esc(t.date || '')}</td><td>${esc(t.symbol || '')}</td><td class="num">${won(t.pnl)}원</td><td class="${cls}">${QUAD_KO[q]}</td></tr>`);
+  }
+  H.push('</table></section>');
+  H.push('<p class="muted">판정 대기 확정: <a href="http://127.0.0.1:' + gatePort() + '/judgments">군주 판정 대기(관문)</a></p>');
+  H.push('</main></body></html>');
+  return H.join('\n');
+}
+
+function pageHead(title) {
+  const H = [];
+  H.push(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>`);
+  H.push('<style>body{font-family:system-ui,Malgun Gothic,sans-serif;margin:0;background:#f4f1ea;color:#222}header{background:#3b2f2f;color:#f4f1ea;padding:12px 16px;font-weight:bold}main{max-width:720px;margin:0 auto;padding:12px}section{background:#fff;border:1px solid #d8d2c4;border-radius:8px;padding:12px 14px;margin:10px 0}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #eee}.muted{color:#777}.num{font-variant-numeric:tabular-nums}.badge{display:inline-block;border-radius:4px;padding:1px 6px;font-size:11px;color:#fff}.q-honor{background:#e8f4ee}.q-fail{background:#fbeaea}</style></head><body>');
+  H.push(`<header>${esc(title)}</header><main>`);
+  return H;
+}
+
 // 관문 포트(설정 파일 — 기본 62910)
 function gatePort() {
   try {
@@ -174,6 +289,29 @@ function start(opts) {
       return;
     }
     const url = req.url.split('?')[0];
+    // 병법서·논공행상(TSK-021) — 읽기 전용 조회
+    if (url === '/hypotheses') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderHypList(opts));
+      return;
+    }
+    if (url === '/hypothesis') {
+      const id = new URL(req.url, 'http://x').searchParams.get('id');
+      const h = hypothesis.get(id, opts);
+      if (!h) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('가설 없음');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderHypDetail(h, opts));
+      return;
+    }
+    if (url === '/merit') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderMerit(opts));
+      return;
+    }
     if (url === '/' || url === '/index.html') {
       let html;
       try {

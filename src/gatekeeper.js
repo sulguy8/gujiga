@@ -246,6 +246,60 @@ function start(opts) {
 
     const urlPath = req.url.split('?')[0];
 
+    // ---- 군주 판정 대기(TSK-021 / REQ-024): 판정식 없는 증거의 success/fail 확정 ----
+    // 조회는 현황판(62900)이 아니라 여기(관문)에서 — 확정 POST는 same-origin+CSRF로만.
+    if (req.method === 'GET' && urlPath === '/judgments') {
+      const hypMod = require('./hypothesis');
+      const pend = hypMod.pendingJudgments(gateOpts);
+      const csrf = issueCsrf();
+      const H = [`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>군주 판정 대기</title><style>${PAGE_CSS}</style></head><body>`];
+      H.push('<header>논공행상 — 군주 판정 대기</header><main>');
+      if (pend.length === 0) {
+        H.push('<section><p class="muted">판정 대기 증거 없음</p></section>');
+      } else {
+        H.push('<section><table><tr><th>가설</th><th>날짜</th><th>내용</th><th>종류</th><th>결정</th></tr>');
+        for (const p of pend) {
+          H.push(`<tr><td>${esc(p.hypothesis_id)}</td><td>${esc(p.evidence_date)}</td><td>${esc(p.note)}</td>` +
+            `<td>${p.kind === 'trade' ? '출병' : '관찰'}</td>` +
+            `<td><button onclick="judge('${esc(p.id)}','success')">적중</button> <button onclick="judge('${esc(p.id)}','fail')">빗나감</button></td></tr>`);
+        }
+        H.push('</table>');
+        H.push(`<input type="hidden" name="csrf" value="${csrf}">`);
+        H.push('<div id="result" class="num"></div></section>');
+        H.push('<script>');
+        H.push(`const CSRF=${JSON.stringify(csrf)};`);
+        H.push("async function judge(id,outcome){const r=await fetch('/judgment/confirm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,outcome,csrf:CSRF})});const j=await r.json();document.getElementById('result').textContent=j.ok?('확정됨(judged_by=군주) — 새로고침하여 다음 판정':'오류: '+(j.error||r.status));}");
+        H.push('</script>');
+      }
+      H.push('<p class="muted">판정 기준: 손익이 아니라 가설의 예측 적중 여부. 참고용, 최종 결정은 본인.</p></main></body></html>');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(H.join('\n'));
+      return;
+    }
+    if (req.method === 'POST' && urlPath === '/judgment/confirm') {
+      if (!originAllowed(req.headers.origin)) return reply(403, { ok: false, error: '출처(Origin) 거부' });
+      let jb = '';
+      req.on('data', (c) => (jb += c));
+      req.on('end', () => {
+        let p;
+        try {
+          p = JSON.parse(jb);
+        } catch (e) {
+          return reply(400, { ok: false, error: 'bad_json' });
+        }
+        if (!p || !consumeCsrf(p.csrf)) return reply(403, { ok: false, error: 'CSRF 토큰 없음/불일치/재사용' });
+        if (!['success', 'fail'].includes(p.outcome)) return reply(400, { ok: false, error: 'outcome은 success/fail' });
+        try {
+          const hypMod = require('./hypothesis');
+          const ev = hypMod.confirmPending(p.id, p.outcome, gateOpts); // judged_by='군주' 기록·집계 갱신
+          return reply(200, { ok: true, evidence_id: ev.id, judged_by: ev.judged_by });
+        } catch (e) {
+          return reply(404, { ok: false, error: e.message });
+        }
+      });
+      return;
+    }
+
     // ---- 출사표 확인·실행 창(사람 전용 화면 — same-origin·CSRF·Origin 검사) ----
     if (req.method === 'GET' && urlPath === '/drafts') {
       return html(200, renderList(pendingDrafts(paths.resolveDataDir(opts))));
