@@ -149,7 +149,7 @@ test('지시3: 페이지에 외부 리소스 참조가 없다', async () => {
     seed(dir, {});
     await withServer(dir, {}, async (srv) => {
       const res = await request(srv.port);
-      assert.ok(!/https?:\/\//.test(res.body), '외부 URL 0 (CDN·폰트 금지)');
+      assert.ok(!/https?:\/\/(?!127\.0\.0\.1|localhost)/.test(res.body), '외부 URL 0 (CDN·폰트 금지 — 루프백 링크만 허용)');
       assert.ok(!/<script src=|<link [^>]*href=/.test(res.body), '외부 script/link 없음');
     });
   } finally {

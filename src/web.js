@@ -131,9 +131,21 @@ function render(data) {
   }
   H.push('</section>');
 
+  // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
+  H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
   H.push('<p class="muted" style="font-size:12px">읽기 전용 현황판 — 숫자는 장부 값 그대로. 참고용, 최종 결정은 본인.</p>');
   H.push('</main></body></html>');
   return H.join('\n');
+}
+
+// 관문 포트(설정 파일 — 기본 62910)
+function gatePort() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'gatekeeper.json'), 'utf8'));
+    return cfg.port != null ? cfg.port : 62910;
+  } catch (e) {
+    return 62910;
+  }
 }
 
 // ---- 서버 ----
