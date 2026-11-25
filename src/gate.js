@@ -115,9 +115,21 @@ async function runChecks(draft, env, api, opts) {
   if (!g) return { reason: 'guard_missing', detail: {} };
   if (fs.existsSync(g.stop_file_path)) return { reason: 'stop_file', detail: {} };
 
-  // ② 출사표 5항목(REQ-001)
+  // ② 출사표 5항목(REQ-001) + 근거 가설(REQ-023 — 매수만, TSK-020)
   const invalid = orderDraft.validate(draft);
   if (invalid) return { reason: `draft_invalid_${invalid}`, detail: { missing: invalid } };
+  if (isBuy) {
+    const ids = draft.hypothesis_ids;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 3) {
+      return { reason: 'no_rationale', detail: { ids: ids || null, note: '매수 출사표는 근거 가설 ID 1~3개 필수' } };
+    }
+    const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
+    for (const hid of ids) {
+      const h = bookItems.find((x) => x.id === hid);
+      if (!h) return { reason: 'no_rationale', detail: { ids, note: `장부에 없는 가설: ${hid}` } };
+      if (h.status === 'discarded') return { reason: 'no_rationale', detail: { ids, note: `폐기된 가설 인용: ${hid}` } };
+    }
+  }
 
   // ③ 사용자 확인(실전) — AI 단독 주문 구조적 불가(REQ-002)
   if (env === 'real' && draft.user_confirmed !== true) return { reason: 'no_confirm', detail: {} };
@@ -229,7 +241,32 @@ async function runChecks(draft, env, api, opts) {
     if (limits.concurrentMax != null && !symbols.has(draft.symbol) && symbols.size >= limits.concurrentMax) {
       return { reason: 'nation_limit', detail: { kind: 'concurrent', open: symbols.size, limit: limits.concurrentMax } };
     }
-  } else if (draft.nation) {
+  }
+  // ⑦-보강(TSK-020 / REQ-023): 인용 가설 '최고 등급' 기준 병력 상한 —
+  //   검증됨=관직 한도 전부 / 검증 중=절반(버림) / 가설=정찰대 10명 고정(승상 재량도 동일).
+  //   제출 시점의 장부 등급을 읽는다. 매도는 미적용(위에서 이미 반환).
+  {
+    const ids = draft.hypothesis_ids || [];
+    const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
+    const rankOf = { verified: 3, testing: 2, hypothesis: 1 };
+    let best = null;
+    for (const hid of ids) {
+      const h = bookItems.find((x) => x.id === hid);
+      if (h && rankOf[h.status] && (!best || rankOf[h.status] > rankOf[best])) best = h.status;
+    }
+    if (best) {
+      const limits = generalRank.getLimits(opts);
+      const base = limits.perStockTroopsMax; // null = 승상 재량
+      let cap = null;
+      if (best === 'verified') cap = base; // 전부(재량=무제한)
+      else if (best === 'testing') cap = base != null ? Math.floor(base / 2) : null;
+      else cap = 10; // 가설 — 정찰대 10명 고정
+      if (cap != null && draft.troops > cap) {
+        return { reason: 'grade_cap', detail: { grade: best, cap, troops: draft.troops } };
+      }
+    }
+  }
+  if (env !== 'real' && draft.nation) {
     // REQ-009 세력전: 나라별 동시 2종목·종목당 250,000원
     const mine = allPos.filter((p) => p.account_type === 'paper' && p.nation === draft.nation);
     const sameAmt = mine.filter((p) => p.symbol === draft.symbol).reduce((s, p) => s + p.qty * p.avg_price, 0);

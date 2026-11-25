@@ -63,6 +63,7 @@ function asideDraft(env, side, symbol, qty, price, opt) {
     target_price: opt.target_price != null ? opt.target_price : (opt.target != null ? opt.target : null),
     deadline: opt.deadline || today,
     troops: Math.max(1, Math.floor((qty * price) / 10000)),
+    hypothesis_ids: Array.isArray(opt.hypothesis_ids) ? opt.hypothesis_ids : null,
     user_confirmed: opt.confirmed === true,
     created_by: 'aside_chat',
     reason: opt.reason,
