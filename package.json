@@ -5,6 +5,8 @@
   "description": "주식투자 앱 — 파일(md·jsonl)+Git 저장소. Node 내장 모듈만(zero-dependency).",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-start.ps1",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-stop.ps1"
   }
 }
