@@ -286,7 +286,9 @@ async function make(env, opts) {
         rt: j.rt_cd, msg: (j.msg1 || '').trim(),
         rows: (j.output1 || []).map((x) => ({
           orgno: x.ord_gno_brno, odno: x.odno, orgOdno: x.orgn_odno, side: x.sll_buy_dvsn_cd_name,
-          name: x.prdt_name, ordQty: +x.ord_qty, ordPrice: +x.ord_unpr, filled: +x.tot_ccld_qty,
+          name: x.prdt_name,
+          symbol: x.pdno || null, // 종목코드(출사표 003 — 회군 감지 매칭용, 없으면 null)
+          ordQty: +x.ord_qty, ordPrice: +x.ord_unpr, filled: +x.tot_ccld_qty,
           avgFill: +x.avg_prvs, remain: +x.rmn_qty, cancelled: x.cncl_yn, time: x.ord_tmd,
         })),
       };

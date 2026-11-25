@@ -147,6 +147,21 @@ function render(data, opts2) {
     }
   } catch (e) { /* 집계 실패 시 생략 */ }
 
+  // 입금 확인 대기 배지만(출사표 003) — 확정은 관문(62910)에서
+  try {
+    const dd = paths2.resolveDataDir(opts2 || {});
+    const readL = (name) => {
+      const d = path.join(dd, 'ledger', name);
+      if (!fs.existsSync(d)) return [];
+      return fs.readdirSync(d).flatMap((f) => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(JSON.parse));
+    };
+    const decided = new Set(readL('flow_decision').map((r) => r.flow_id));
+    const pendingFlows = readL('flow_pending').filter((r) => !decided.has(r.id)).length;
+    if (pendingFlows > 0) {
+      H.push(`<p><span class="badge" style="background:#9a6b00">입금 확인 대기 ${pendingFlows}건</span> <a href="http://127.0.0.1:${gatePort()}/flows">관문에서 확인</a></p>`);
+    }
+  } catch (e) { /* 집계 실패 시 생략 */ }
+
   // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
   H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
   H.push('<p class="muted" style="font-size:12px">읽기 전용 현황판 — 숫자는 장부 값 그대로. 참고용, 최종 결정은 본인.</p>');

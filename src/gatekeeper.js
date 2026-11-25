@@ -246,6 +246,68 @@ function start(opts) {
 
     const urlPath = req.url.split('?')[0];
 
+    // ---- 입금 확인 대기(출사표 003): flow_pending 확정/거부 — judgments 패턴 재사용 ----
+    if (req.method === 'GET' && urlPath === '/flows') {
+      const dataDir2 = paths.resolveDataDir(opts);
+      const decided = new Set(readRows(dataDir2, 'flow_decision').map((r) => r.flow_id));
+      const pend = readRows(dataDir2, 'flow_pending').filter((r) => !decided.has(r.id));
+      const csrf = issueCsrf();
+      const H = [`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>입금 확인 대기</title><style>${PAGE_CSS}</style></head><body>`];
+      H.push('<header>군량 수송 확인 — 입출금 추정(현금 기준)</header><main>');
+      if (pend.length === 0) {
+        H.push('<section><p class="muted">확인 대기 항목 없음</p></section>');
+      } else {
+        H.push('<section><table><tr><th>날짜</th><th>금액</th><th>근거</th><th>결정</th></tr>');
+        for (const p of pend) {
+          H.push(`<tr><td>${esc(p.date)}</td><td class="num">${won(p.amount)}원</td>` +
+            `<td class="num muted">현금 ${won(p.prev_cash)} → ${won(p.today_cash)} (체결 설명 ${won(p.explained_cash || 0)})</td>` +
+            `<td><button onclick="flow('${esc(p.id)}','confirm')">입출금 확정</button> <button onclick="flow('${esc(p.id)}','reject')">아님(거부)</button></td></tr>`);
+        }
+        H.push('</table>');
+        H.push(`<input type="hidden" name="csrf" value="${csrf}">`);
+        H.push('<div id="result" class="num"></div></section>');
+        H.push('<script>');
+        H.push(`const CSRF=${JSON.stringify(csrf)};`);
+        H.push("async function flow(id,act){const why=act==='reject'?(prompt('거부 사유')||''):'';const r=await fetch('/flow/'+act,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,csrf:CSRF,reason:why})});const j=await r.json();document.getElementById('result').textContent=j.ok?'처리됨 — 새로고침':'오류: '+(j.error||r.status);}");
+        H.push('</script>');
+      }
+      H.push('<p class="muted">확정하면 기준선에 같은 금액 매매 가정으로 반영된다(benchmark.recordFlow). 참고용, 최종 결정은 본인.</p></main></body></html>');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(H.join('\n'));
+      return;
+    }
+    if (req.method === 'POST' && (urlPath === '/flow/confirm' || urlPath === '/flow/reject')) {
+      if (!originAllowed(req.headers.origin)) return reply(403, { ok: false, error: '출처(Origin) 거부' });
+      let fb = '';
+      req.on('data', (c) => (fb += c));
+      req.on('end', () => {
+        let p;
+        try {
+          p = JSON.parse(fb);
+        } catch (e) {
+          return reply(400, { ok: false, error: 'bad_json' });
+        }
+        if (!p || !consumeCsrf(p.csrf)) return reply(403, { ok: false, error: 'CSRF 토큰 없음/불일치/재사용' });
+        const dataDir2 = paths.resolveDataDir(opts);
+        const decided = new Set(readRows(dataDir2, 'flow_decision').map((r) => r.flow_id));
+        const row = readRows(dataDir2, 'flow_pending').find((r) => r.id === p.id && !decided.has(r.id));
+        if (!row) return reply(404, { ok: false, error: '대기 항목 없음(이미 결정됐을 수 있음)' });
+        try {
+          if (urlPath === '/flow/confirm') {
+            const benchmarkMod = require('./benchmark');
+            benchmarkMod.recordFlow({ date: row.date, account: 'real', amount: row.amount }, gateOpts);
+            ledger.append('flow_decision', { id: crypto.randomUUID(), flow_id: row.id, action: 'confirmed', created_at: new Date().toISOString() }, gateOpts);
+            return reply(200, { ok: true, action: 'confirmed' });
+          }
+          ledger.append('flow_decision', { id: crypto.randomUUID(), flow_id: row.id, action: 'rejected', reason: (p.reason || '').slice(0, 200) || null, created_at: new Date().toISOString() }, gateOpts);
+          return reply(200, { ok: true, action: 'rejected' });
+        } catch (e) {
+          return reply(500, { ok: false, error: e.message });
+        }
+      });
+      return;
+    }
+
     // ---- 군주 판정 대기(TSK-021 / REQ-024): 판정식 없는 증거의 success/fail 확정 ----
     // 조회는 현황판(62900)이 아니라 여기(관문)에서 — 확정 POST는 same-origin+CSRF로만.
     if (req.method === 'GET' && urlPath === '/judgments') {

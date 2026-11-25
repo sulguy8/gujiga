@@ -203,7 +203,9 @@ function runSnapshot(date, opts) {
   return { errors };
 }
 
-// --- 입금 감지(출사표 002): 설명 안 되는 총평가 변동 → flow_pending(군주 확인 대기) ---
+// --- 입금 감지(출사표 003 개정 — '현금(예수금)' 기준) ---
+// 군사 검토: 총평가에는 미실현 평가손익이 섞여 매일 오탐 — 예수금 변동에서 체결 현금 흐름
+// (매수 대금 −, 매도 대금 +)을 뺀 '미설명 현금 흐름'만 감지한다. 자동 확정 금지(확인 대기).
 function detectUnexplainedFlow(date, opts) {
   const dataDir = paths.resolveDataDir(opts);
   if (readLog(dataDir, 'flow_pending').some((r) => r.date === date)) return; // 멱등(일 1회)
@@ -214,18 +216,21 @@ function detectUnexplainedFlow(date, opts) {
   const today = snaps[snaps.length - 1];
   const prev = snaps[snaps.length - 2];
   if (today.snapshot_date !== date) return;
-  const diff = today.start_total_eval - prev.start_total_eval;
-  // 손익으로 설명되는 부분(직전 스냅샷일 이후 확정 손익)
-  const explained = readLog(dataDir, 'captive_ledger')
-    .filter((r) => r.account_type === 'real' && r.trade_date >= prev.snapshot_date && r.trade_date < date)
-    .reduce((s, r) => s + r.realized_pnl, 0);
-  const unexplained = diff - explained;
+  const diffCash = today.start_cash - prev.start_cash;
+  // 체결 현금 흐름(직전 스냅샷일 이후): 매도 +, 매수 −. 체결(filled/partial)만.
+  const explained = readLog(dataDir, 'order_log')
+    .filter((r) => r.account_type === 'real'
+      && ['filled', 'partial'].includes(r.status)
+      && String(r.created_at || '').slice(0, 10) >= prev.snapshot_date
+      && String(r.created_at || '').slice(0, 10) < date)
+    .reduce((s, r) => s + (r.side === 'sell' ? r.amount : -r.amount), 0);
+  const unexplained = diffCash - explained;
   if (Math.abs(unexplained) < 1000) return; // 잡음 무시
   ledger.append('flow_pending', {
     id: crypto.randomUUID(), date, amount: unexplained,
-    prev_total: prev.start_total_eval, today_total: today.start_total_eval, explained_pnl: explained,
+    prev_cash: prev.start_cash, today_cash: today.start_cash, explained_cash: explained,
     status: 'awaiting_confirm',
-    note: '입출금 추정 — 군주 확인 후 benchmark.recordFlow로 확정(자동 확정 금지)',
+    note: '입출금 추정(현금 기준) — 군주 확인 후 확정(자동 확정 금지)',
     created_at: new Date().toISOString(),
   }, opts);
 }
@@ -295,11 +300,21 @@ async function watchRetreats(date, opts) {
     return;
   }
   if (!Array.isArray(fillsRows) || fillsRows.length === 0) return;
+  // pdno(종목코드) 없는 체결 행은 매칭 불가 — 회군 감지에서 건너뛰고 기록(출사표 003, 멱등)
+  const noted = new Set(readLog(paths.resolveDataDir(opts), 'shadow_job_log')
+    .filter((r) => r.job === 'retreat_watch' && r.status === 'note')
+    .map((r) => r.skipped_odno));
+  for (const f of fillsRows) {
+    if (!f.symbol && f.odno && !noted.has(f.odno)) {
+      logJob('note', 'retreat_watch', date, opts, { skipped_odno: f.odno, reason: 'no_pdno — 종목코드 없는 체결 행, 회군 감지 제외' });
+    }
+  }
+
   const positions = state.read('positions', opts) || [];
   let changed = false;
   for (const p of positions) {
     if (p.status !== 'open') continue;
-    const fill = fillsRows.find((f) => f.symbol === p.symbol && f.side === 'sell' && f.remain === 0 && f.filled >= p.qty);
+    const fill = fillsRows.find((f) => f.symbol && f.symbol === p.symbol && f.side === 'sell' && f.remain === 0 && f.filled >= p.qty);
     if (!fill) continue;
     p.status = 'closed';
     p.closed_at = new Date().toISOString();
