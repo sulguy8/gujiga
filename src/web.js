@@ -16,6 +16,7 @@ const path = require('node:path');
 const board = require('./camp_board');
 const hypothesis = require('./hypothesis');
 const merit = require('./merit');
+const benchmark = require('./benchmark');
 const generalRank = require('./general_rank');
 const paths2 = require('./paths');
 
@@ -46,7 +47,7 @@ function won(n) {
 }
 
 // ---- 화면 렌더(서버 사이드, 외부 리소스 0) ----
-function render(data) {
+function render(data, opts2) {
   const H = [];
   H.push('<!doctype html><html lang="ko"><head><meta charset="utf-8">');
   H.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
@@ -134,6 +135,17 @@ function render(data) {
     }
   }
   H.push('</section>');
+
+  // 비교 기준선 요약 1줄(TSK-022 — SCR-005 보강)
+  try {
+    const bs = benchmark.summary(opts2 || {});
+    if (bs) {
+      H.push('<section><h2>천시 - 비교 기준선(KODEX 200)</h2>');
+      if (bs.warn4w) H.push('<p style="color:#b3261e"><b>경고: 4주 연속 초과수익 마이너스 - 지수 보유보다 못함</b></p>');
+      H.push(`<p class="num">우리 ${bs.ours.returnPct == null ? '없음' : bs.ours.returnPct + '%'} · 기준선 ${bs.bench.returnPct == null ? '없음' : bs.bench.returnPct + '%'} · 초과 ${bs.excessPp == null ? '없음' : bs.excessPp + '%p'} · 낙폭 ${bs.ours.mddPct}%/${bs.bench.mddPct}%${bs.missingDays ? ' · 결측 ' + bs.missingDays + '일' : ''}</p>`);
+      H.push('</section>');
+    }
+  } catch (e) { /* 집계 실패 시 생략 */ }
 
   // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
   H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
@@ -232,6 +244,18 @@ function renderMerit(opts) {
   H.push('</table>');
   H.push(`<p class="num">무승부(0원) ${r.counts.draw}건 · 근거 준수율 ${r.compliantRatePct == null ? '해당 없음' : r.compliantRatePct + '%'} (${r.compliantCount}/${r.total})</p>`);
   H.push('</section>');
+  // 비교 기준선(KODEX 200) — 4종 지표(TSK-022 / REQ-027)
+  const bs = benchmark.summary(opts);
+  H.push('<section><h3>비교 기준선 - KODEX 200 보유 시</h3>');
+  if (!bs) {
+    H.push('<p class="muted">기준선 원장 없음</p>');
+  } else {
+    if (bs.warn4w) H.push('<p class="q-fail" style="color:#b3261e"><b>경고: 4주 연속 초과수익 마이너스 - 지수 보유보다 못함</b></p>');
+    H.push(`<p class="num">우리 ${bs.ours.returnPct == null ? '없음' : bs.ours.returnPct + '%'} · 기준선 ${bs.bench.returnPct == null ? '없음' : bs.bench.returnPct + '%'} · 초과 ${bs.excessPp == null ? '없음' : bs.excessPp + '%p'} · 최대 낙폭 우리 ${bs.ours.mddPct}% / 기준선 ${bs.bench.mddPct}%</p>`);
+    if (bs.missingDays > 0) H.push(`<p class="muted">결측 ${bs.missingDays}일 - 직전 종가 유지로 계산</p>`);
+  }
+  H.push('</section>');
+
   // 거래 목록(손익 열과 별도로 분면 표기)
   H.push('<section><h3>거래별</h3><table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
   for (const t of trades) {
@@ -315,7 +339,7 @@ function start(opts) {
     if (url === '/' || url === '/index.html') {
       let html;
       try {
-        html = render(board.gather(opts));
+        html = render(board.gather(opts), opts);
       } catch (e) {
         // 조립 실패도 500 텍스트로만 — 쓰기 없음
         res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });

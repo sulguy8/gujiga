@@ -1,0 +1,10 @@
+{
+  "_comment": "비교 기준선 설정 (TSK-022 / REQ-027). KODEX 200(069500) KRX 공식 종가. 입출금은 그날 종가로 같은 금액 매매 가정. 수수료·세금은 양쪽 모두 제외(동일 규칙 강제).",
+  "symbol": "069500",
+  "real": { "start_date": "2026-11-24", "start_amount": 500000 },
+  "nations": {
+    "chok": { "start_date": "2026-11-23", "start_amount": 1000000 },
+    "wi": { "start_date": "2026-11-23", "start_amount": 500000 },
+    "o": { "start_date": "2026-11-23", "start_amount": 500000 }
+  }
+}
