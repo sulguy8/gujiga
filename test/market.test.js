@@ -50,6 +50,15 @@ function fakeKis(cfg) {
       received.push({ path: u.pathname, trId: req.headers['tr_id'], query: Object.fromEntries(u.searchParams) });
       const reply = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
       if (u.pathname === '/oauth2/tokenP') return reply({ access_token: 'FT', access_token_token_expired: '2026-11-26 23:59:59' });
+      if (u.pathname.endsWith('inquire-investor-daily-by-market')) {
+        if (cfg.investorFail) return reply({ rt_cd: '1', msg1: '투자자 동향 실패' });
+        // 필드명 frgn_ntby_tr_pbmn 은 fixture — 실제 관찰 1일에서 확인 항목(제안서 기재)
+        return reply({ rt_cd: '0', msg1: '정상', output: [
+          { stck_bsop_date: '20261124', frgn_ntby_tr_pbmn: '1200' },
+          { stck_bsop_date: '20261123', frgn_ntby_tr_pbmn: '-500' },
+          { stck_bsop_date: '20261122', frgn_ntby_tr_pbmn: '-300' },
+        ] });
+      }
       if (u.pathname.endsWith('inquire-daily-indexchartprice')) {
         if (cfg.indexFail) return reply({ rt_cd: '1', msg1: '지수 일봉 실패' });
         // 25봉: 종가 5000, 5001, ..., 5024 (최신이 5024) — KIS는 최신 먼저
@@ -143,7 +152,9 @@ test('시나리오1: 수집 1회로 market_snapshot 1행 생성(필수 필드·�
     assert.equal(c.judgeInputs.night_future_pct, -4.56, '야간선물(웹검색)');
     assert.equal(c.judgeInputs.us_summary.vix, 26.36);
     assert.equal(c.judgeInputs.sox_base_low, 8408.59, '기준 저점(장부)');
-    assert.ok(c.missing.includes('foreign_net_days'), '외국인은 TR 미확정 — 결측');
+    assert.equal(c.judgeInputs.foreign_net_days, 1, '외국인 순매수 연속 1일(11/24 매수·11/23 매도)');
+    assert.equal(c.sources.foreign_net_days, 'kis_investor');
+    assert.ok(c.unverified.includes('foreign_net_days'), '실서버 확인 전 미검증 태그');
 
     const file = market.saveSnapshot(c, JUDGE_STUB, s.opts);
     assert.ok(fs.existsSync(file));
@@ -151,7 +162,7 @@ test('시나리오1: 수집 1회로 market_snapshot 1행 생성(필수 필드·�
     assert.equal(row.snapshot_date, '2026-11-25');
     assert.equal(row.weather, 'defense');
     assert.ok(row.sources && row.created_at && Array.isArray(row.signals), 'DAT-013 필수 필드');
-    assert.ok(row.missing.includes('foreign_net_days'));
+    assert.ok((row.unverified || []).includes('foreign_net_days'), '스냅샷에도 미검증 태그');
   } finally {
     await down(s);
   }
@@ -272,4 +283,77 @@ test('스냅샷: 같은 날 재판정은 새 버전 파일(수정 금지)', asyn
   } finally {
     await down(s);
   }
+});
+
+// =====================================================================
+// TSK-015/016 보완 (군주 확정 2026-11-25)
+// =====================================================================
+
+// ===== 외국인 TR 확정: FHPTJ04040000·파라미터 검증 =====
+test('보완: 외국인 투자자 동향 TR FHPTJ04040000·U·0001·KSP 파라미터', async () => {
+  const s = await boot();
+  try {
+    await market.collect(s.opts);
+    const req = s.kisSrv.received.find((r) => r.path.endsWith('inquire-investor-daily-by-market'));
+    assert.ok(req, '투자자 동향 호출');
+    assert.equal(req.trId, 'FHPTJ04040000', '확정 TR');
+    assert.equal(req.query.FID_COND_MRKT_DIV_CODE, 'U');
+    assert.equal(req.query.FID_INPUT_ISCD, '0001');
+    assert.equal(req.query.FID_INPUT_ISCD_1, 'KSP');
+    assert.equal(req.query.FID_INPUT_ISCD_2, '0001');
+    assert.ok(req.query.FID_INPUT_DATE_1 && req.query.FID_INPUT_DATE_2, '조회일 파라미터');
+  } finally {
+    await down(s);
+  }
+});
+
+// ===== 외국인 수집 실패 → 결측(대체 금지) =====
+test('보완: 투자자 동향 실패 시 foreign만 결측·나머지 정상', async () => {
+  const s = await boot({ kis: { investorFail: true } });
+  try {
+    const c = await market.collect(s.opts);
+    assert.ok(c.missing.includes('foreign_net_days'), '결측');
+    assert.equal(c.judgeInputs.foreign_net_days, null);
+    assert.equal(c.judgeInputs.kospi_close, 5024, '지수는 정상');
+  } finally {
+    await down(s);
+  }
+});
+
+// ===== overnight 입력 순수성: 장부·계좌·키 관련 정보 0 =====
+test('보완: overnight 프롬프트에 장부·계좌·키 정보가 없다', async () => {
+  const s = await boot();
+  try {
+    // 민감 데이터를 환경에 심어 둔다 — 프롬프트에 새면 실패
+    state.write('positions', [{ id: 'p1', account_type: 'real', symbol: '005930', qty: 88, avg_price: 61600, stop_price: 59000, target_price: 66000, deadline: '2026-12-05', status: 'open' }], { dataDir: s.dir });
+    secret.saveToken('kis_token_real', { token: 'SUPER-SECRET-TOKEN-XYZ', expires: '2026-11-26 23:59:59' }, { dataDir: s.dir });
+
+    // 가짜 CLI가 stdin(프롬프트)을 파일로 남기도록 교체
+    const dumpFile = path.join(s.dir, 'stdin-dump.txt');
+    const cli = path.join(s.dir, 'dump-cli.js');
+    fs.writeFileSync(cli, `
+const fs=require('fs');
+let input=''; try{input=fs.readFileSync(0,'utf8');}catch(e){}
+fs.writeFileSync(${JSON.stringify(dumpFile)}, input);
+process.stdout.write(JSON.stringify({sp500:-0.8,nasdaq:-1.4,sox:-2.1,vix:26.36,night_future_pct:-4.56}));
+`, 'utf8');
+    s.opts.strategistOpts.claudeArgsPrefix = [cli];
+
+    await market.collect(s.opts);
+    const prompt = fs.readFileSync(dumpFile, 'utf8');
+    for (const bad of ['SUPER-SECRET', '61600', '88', 'positions', 'secrets', 'appkey', '계좌', '잔고']) {
+      assert.ok(!prompt.includes(bad), `프롬프트에 민감 정보 없음: ${bad}`);
+    }
+    assert.match(prompt, /야간선물|S&P|미국/, '요청 내용은 시장 수치뿐');
+  } finally {
+    await down(s);
+  }
+});
+
+// ===== 카나리아 스크립트: overnight 인자 모드 존재(실행하지 않음 — 군주 승인 후 1회) =====
+test('보완: 카나리아 스크립트에 overnight 모드가 있고 승인 문구가 있다', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'canary-strategist.js'), 'utf8');
+  assert.match(src, /--overnight|overnight/, 'overnight 모드');
+  assert.match(src, /군주 승인/, '실행은 군주 승인 후');
+  assert.match(src, /CANARY/, '카나리아 파일 검증');
 });

@@ -335,7 +335,7 @@ async function submit(draft, opts) {
 }
 
 // --- 조회 통로(관문용): 주문이 아닌 함수만 — price/balance/fills/dailyCandle ---
-const QUERY_FNS = { price: 'quote', balance: 'balance', fills: 'fills', dailyCandle: 'dailyCandle', dailyIndexCandle: 'dailyIndexCandle' };
+const QUERY_FNS = { price: 'quote', balance: 'balance', fills: 'fills', dailyCandle: 'dailyCandle', dailyIndexCandle: 'dailyIndexCandle', investorDaily: 'investorDaily' };
 async function query(env, fn, args, opts) {
   const mapped = QUERY_FNS[fn];
   if (!mapped) throw new Error(`조회 불가 함수: ${fn} — 주문은 gate.submit만`);
