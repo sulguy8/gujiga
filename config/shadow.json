@@ -1,0 +1,4 @@
+{
+  "_comment": "그림자 운용 설정 (TSK-018). aside_root는 대조용 '읽기 전용' — 그림자는 이 폴더에 절대 쓰지 않는다. Aside 군의 보고는 <aside_root>\\trading\\reports\\<YYYY-MM-DD>.json (weather·signals_on·stage — 군사가 기록).",
+  "aside_root": "C:\\Users\\조용수\\.aside\\u\\1"
+}
