@@ -345,7 +345,8 @@ test('경계: 상한 소진 후 척후 액션 — LLM 생략·상한 알림 1회
 test('상주: shadow 등록/해제 ps1 존재·로그온 트리거·군주 실행 문구', () => {
   const reg = fs.readFileSync(path.join(__dirname, '..', 'bin', 'shadow-task-register.ps1'), 'utf8');
   const unreg = fs.readFileSync(path.join(__dirname, '..', 'bin', 'shadow-task-unregister.ps1'), 'utf8');
-  assert.match(reg, /ONLOGON/i);
+  // 지령 006: schtasks(ONLOGON) → Register-ScheduledTask(-AtLogOn)로 재작성 — 둘 다 허용
+  assert.match(reg, /ONLOGON|AtLogOn/i);
   assert.match(reg, /군주가 직접/);
   assert.match(reg, /run-shadow/);
   assert.match(unreg, /Delete/i);

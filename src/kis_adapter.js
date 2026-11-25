@@ -221,6 +221,8 @@ async function make(env, opts) {
       const rows = (j.output || j.output1 || []).filter((x) => x.stck_bsop_date).map((x) => ({
         date: `${x.stck_bsop_date.slice(0, 4)}-${x.stck_bsop_date.slice(4, 6)}-${x.stck_bsop_date.slice(6, 8)}`,
         foreignNet: +(x.frgn_ntby_tr_pbmn != null ? x.frgn_ntby_tr_pbmn : x.frgn_ntby_qty), // 필드명 실관찰 확인 항목
+        // 실관찰(지령 006)용: 실제 응답에서 어느 필드가 쓰였는지 표식(값 아님)
+        field: x.frgn_ntby_tr_pbmn != null ? 'frgn_ntby_tr_pbmn' : (x.frgn_ntby_qty != null ? 'frgn_ntby_qty' : 'none'),
       }));
       // 최신 먼저로 정렬
       rows.sort((a, b) => b.date.localeCompare(a.date));
