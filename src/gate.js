@@ -26,6 +26,7 @@ const orderDraft = require('./order_draft');
 const generalRank = require('./general_rank');
 const { kstParts } = require('./kst');
 
+const DEFAULT_GATE_CONFIG = path.join(__dirname, '..', 'config', 'gate.json');
 const SNAPSHOT_READY_MIN = 8 * 60 + 30; // 08:30 — 이후에만 첫 잔고로 스냅샷 보완
 const FILL_POLL_MS = 10000;  // 체결조회 간격(ARC-003 확정: 10초)
 const FILL_POLL_MAX = 60000; // 최대 1분
@@ -72,9 +73,31 @@ function pearson(a, b) {
   return cov / Math.sqrt(va * vb);
 }
 
-async function makeAdapter(env, opts) {
+async function makeAdapter(env, opts, enableRealOrders) {
   if (opts.adapter) return opts.adapter;
-  return kis.make(env, { dataDir: opts.dataDir, keysPath: opts.keysPath, baseUrls: opts.baseUrls, gapMs: opts.gapMs });
+  return kis.make(env, {
+    dataDir: opts.dataDir, keysPath: opts.keysPath, baseUrls: opts.baseUrls, gapMs: opts.gapMs,
+    enableRealOrders: enableRealOrders === true,
+  });
+}
+
+// 실전 전송 경로 정책(기본 거부): config/gate.json enableRealOrders의 명시적 true만 허용.
+// aside_chat은 추가로 confirmed=true·reason 존재가 전제(7단계 통과는 runChecks가 보장).
+function realOrderAllowed(draft, opts) {
+  let policy = opts.realOrderPolicy;
+  if (!policy) {
+    try {
+      policy = JSON.parse(fs.readFileSync((opts.gateConfigPath || DEFAULT_GATE_CONFIG), 'utf8')).enableRealOrders;
+    } catch (e) {
+      policy = {};
+    }
+  }
+  const by = draft.created_by;
+  if (!policy || policy[by] !== true) return false;
+  if (by === 'aside_chat') {
+    return draft.user_confirmed === true && typeof draft.reason === 'string' && draft.reason.trim().length > 0;
+  }
+  return true;
 }
 
 function logOrder(row, opts) {
@@ -258,7 +281,8 @@ async function submit(draft, opts) {
 
   let api;
   try {
-    api = await makeAdapter(env, opts);
+    // 실전 전송은 경로별 정책(기본 거부) — 허용 경로가 아니면 어댑터 주문이 비활성으로 거부한다.
+    api = await makeAdapter(env, opts, env === 'real' && realOrderAllowed(draft, opts));
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -320,19 +344,37 @@ async function query(env, fn, args, opts) {
 }
 
 // --- 정정·취소(STOP 검사 후 어댑터 경유 — gate만이 유일 통로) ---
+// 실전 정정·취소는 aside_chat 실전 주문이 허용된 경우에만(기존 주문의 축소·철회 동작).
+function realAmendAllowed(opts) {
+  return realOrderAllowed({ created_by: 'aside_chat', user_confirmed: true, reason: 'amend' }, opts);
+}
 async function amend(env, [orgno, odno, qty, newPrice], opts) {
   const g = guard.loadGuard(opts);
   if (!g) throw new Error('관문 차단(guard_missing)');
   if (fs.existsSync(g.stop_file_path)) throw new Error('관문 차단(stop_file)');
-  const api = await makeAdapter(env, opts || {});
+  const api = await makeAdapter(env, opts || {}, env === 'real' && realAmendAllowed(opts || {}));
   return api.modify(orgno, odno, qty, newPrice);
 }
 async function revoke(env, [orgno, odno, qty], opts) {
   const g = guard.loadGuard(opts);
   if (!g) throw new Error('관문 차단(guard_missing)');
   if (fs.existsSync(g.stop_file_path)) throw new Error('관문 차단(stop_file)');
-  const api = await makeAdapter(env, opts || {});
+  const api = await makeAdapter(env, opts || {}, env === 'real' && realAmendAllowed(opts || {}));
   return api.cancel(orgno, odno, qty);
 }
 
-module.exports = { submit, query, amend, revoke, pearson, returnsOf };
+// --- 검사 미리보기(전송·기록 없음) — 실행 모달(SCR-001)의 검사 결과판용 ---
+async function precheck(draft, opts) {
+  opts = opts || {};
+  const env = draft.account_type === 'real' ? 'real' : 'mock';
+  const api = await makeAdapter(env, opts, false); // 미리보기는 전송 불가 어댑터
+  const block = await runChecks(draft, env, api, opts);
+  return {
+    blocked: !!block,
+    reason: block ? block.reason : null,
+    detail: block ? block.detail : null,
+    realAllowed: env !== 'real' ? true : realOrderAllowed(draft, opts),
+  };
+}
+
+module.exports = { submit, precheck, query, amend, revoke, realOrderAllowed, pearson, returnsOf };

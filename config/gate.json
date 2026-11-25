@@ -1,0 +1,9 @@
+{
+  "_comment": "단일 주문 게이트 정책 (TSK-005 보완). 실전 전송 허용 경로 — 명시된 true만 허용, 그 외(미기재 포함)는 전부 차단(기본 거부). aside_chat은 confirmed=true·reason 존재·7단계 통과가 전제. ui/ai/system은 TSK-012 전까지 false 유지.",
+  "enableRealOrders": {
+    "aside_chat": true,
+    "ui": false,
+    "ai": false,
+    "system": false
+  }
+}

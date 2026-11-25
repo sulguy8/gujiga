@@ -422,6 +422,60 @@ test('시나리오12(AC4): 정상 모의 주문 접수 → 체결조회 결과�
   }
 });
 
+// ===== 실전 경로별 활성화(TSK-005 보완): aside_chat만 허용, ui/ai/system/human 차단 =====
+test('실전 경로: aside_chat(confirmed·reason·7단계 통과)만 실전 전송, 나머지 경로 차단', async () => {
+  const policy = { realOrderPolicy: { aside_chat: true, ui: false, ai: false, system: false } };
+  const base = {
+    account_type: 'real', created_by: 'aside_chat', user_confirmed: true, reason: '군주 지시 매수',
+    symbol: '005930', side: 'buy', entry_low: 61500, entry_high: 61500,
+    stop_price: 59000, target_price: 66000, deadline: '2026-12-05', troops: 18, qty: 3, price: 61500,
+    nation: null,
+  };
+
+  // (a) aside_chat 전 조건 충족 → 실전 전송 허용(가짜 실전 서버 수신 1)
+  const s = await boot({ real: { balance: { cash: 900000, total: 1000000 } } });
+  try {
+    const r = await gate.submit(Object.assign({}, base), Object.assign({}, s.opts, policy));
+    assert.equal(r.ok, true, 'aside_chat 실전 전송 허용');
+    assert.equal(r.result.odno, '0000117057');
+    assert.equal(s.realSrv.received.filter((x) => x.path.endsWith('order-cash')).length, 1, '실전 주문 전송 1건');
+    const rows = logRows(s.dir).filter((x) => x.status !== 'blocked');
+    assert.equal(rows[0].created_by, 'aside_chat');
+  } finally {
+    await down(s);
+  }
+
+  // (b) 같은 조건·다른 경로(ai/ui/system/human) → 전송 0(어댑터 비활성 거부)
+  for (const by of ['ai', 'ui', 'system', 'human']) {
+    const s2 = await boot({ real: { balance: { cash: 900000, total: 1000000 } } });
+    try {
+      const r2 = await gate.submit(Object.assign({}, base, { created_by: by }), Object.assign({}, s2.opts, policy));
+      assert.notEqual(r2.ok, true, `${by} 경로 실전 전송 금지`);
+      assert.match(r2.error || '', /비활성|TSK-012/, `${by}: 비활성 거부`);
+      assert.equal(s2.realSrv.received.filter((x) => x.path.endsWith('order-cash')).length, 0, `${by}: 전송 0`);
+    } finally {
+      await down(s2);
+    }
+  }
+
+  // (c) aside_chat이라도 reason 없으면 전송 금지
+  const s3 = await boot({ real: { balance: { cash: 900000, total: 1000000 } } });
+  try {
+    const r3 = await gate.submit(Object.assign({}, base, { reason: '' }), Object.assign({}, s3.opts, policy));
+    assert.notEqual(r3.ok, true, 'reason 없는 aside_chat 금지');
+    assert.equal(s3.realSrv.received.filter((x) => x.path.endsWith('order-cash')).length, 0);
+  } finally {
+    await down(s3);
+  }
+
+  // (d) 기본 정책 파일에도 aside_chat=true·그 외 false가 명시되어 있다
+  const cfgFile = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'gate.json'), 'utf8'));
+  assert.equal(cfgFile.enableRealOrders.aside_chat, true);
+  assert.equal(cfgFile.enableRealOrders.ui, false);
+  assert.equal(cfgFile.enableRealOrders.ai, false);
+  assert.equal(cfgFile.enableRealOrders.system, false);
+});
+
 // ===== AC3/지시1: 어댑터 주문 함수는 gate 밖에서 호출 불가(정규식 검사) =====
 test('AC3: kis_adapter는 gate만 require하고, 주문 호출(.order/.modify/.cancel)은 gate 밖에 없다', () => {
   const srcDir = path.join(__dirname, '..', 'src');
