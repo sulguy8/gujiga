@@ -193,9 +193,22 @@ function gradeCapText(status, opts) {
   return '출병 불가(폐기)';
 }
 
+// 손자약해 정본 규칙(지령 005): mode=practice인 동안 병법서는 '연습장'임을 띠로 표시
+function practiceBand() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'hypothesis.json'), 'utf8'));
+    if (cfg.mode === 'practice') {
+      return '<div style="background:#9a6b00;color:#fff;padding:8px 16px">연습장 — 정본은 Aside 병법서(이관 전)</div>';
+    }
+  } catch (e) { /* 설정 없으면 띠 생략 */ }
+  return null;
+}
+
 function renderHypList(opts) {
   const items = hypothesis.list(opts);
   const H = pageHead('병법서 — 가설 장부');
+  const band = practiceBand();
+  if (band) H.splice(2, 0, band);
   H.push('<section><table><tr><th>가설</th><th>분류</th><th>상태</th><th>표본</th><th>출병</th><th></th></tr>');
   for (const h of items) {
     H.push(`<tr><td>${esc(h.code)}</td><td>${esc(h.category)}</td><td>${STATUS_KO[h.status] || esc(h.status)}</td>` +
@@ -212,6 +225,8 @@ function renderHypDetail(h, opts) {
   const cfgMin = 10;
   const tradeMin = 3;
   const H = pageHead(`병법서 — ${h.code}`);
+  const band = practiceBand();
+  if (band) H.splice(2, 0, band);
   H.push('<section>');
   H.push(`<h3>${esc(h.code)} <span class="muted">(${STATUS_KO[h.status] || esc(h.status)})</span></h3>`);
   H.push(`<p>${esc(h.statement)}</p>`);
