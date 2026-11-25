@@ -182,6 +182,29 @@ async function make(env, opts) {
       })).reverse(); // 과거→최신 오름차순
     },
 
+    // 지수 일봉(KRX 공식) — 코스피 '0001'·코스닥 '1001'. source='krx_official' 태그.
+    // ※ TR FHKUP03500100·FID_COND_MRKT_DIV_CODE='U'는 refs/api에 실검증 기록이 없다(미검증) —
+    //    KIS 공식 OpenAPI 문서의 '국내주식업종기간별시세' 기준. 실수집 관찰 1일(TST-014)에서 확인한다.
+    async dailyIndexCandle(indexCode, days) {
+      const ymd = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+      const end = new Date();
+      const start = new Date(Date.now() - (days || 120) * 864e5);
+      const j = await call('GET', '/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice', 'FHKUP03500100', {
+        FID_COND_MRKT_DIV_CODE: 'U', FID_INPUT_ISCD: indexCode,
+        FID_INPUT_DATE_1: ymd(start), FID_INPUT_DATE_2: ymd(end), FID_PERIOD_DIV_CODE: 'D',
+      });
+      if (j.rt_cd !== '0') throw new Error('지수 일봉 조회 실패 ' + (j.msg1 || '').trim());
+      return (j.output2 || []).filter((x) => x.stck_bsop_date).map((x) => ({
+        date: `${x.stck_bsop_date.slice(0, 4)}-${x.stck_bsop_date.slice(4, 6)}-${x.stck_bsop_date.slice(6, 8)}`,
+        open: +(x.bstp_nmix_oprc != null ? x.bstp_nmix_oprc : x.stck_oprc),
+        high: +(x.bstp_nmix_hgpr != null ? x.bstp_nmix_hgpr : x.stck_hgpr),
+        low: +(x.bstp_nmix_lwpr != null ? x.bstp_nmix_lwpr : x.stck_lwpr),
+        close: +(x.bstp_nmix_prpr != null ? x.bstp_nmix_prpr : x.stck_clpr),
+        vol: +x.acml_vol,
+        source: 'krx_official',
+      })).reverse();
+    },
+
     // 잔고
     async balance() {
       const j = await call('GET', '/uapi/domestic-stock/v1/trading/inquire-balance', tr.bal, {
