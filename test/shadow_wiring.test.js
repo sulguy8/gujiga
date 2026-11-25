@@ -130,16 +130,16 @@ test('배선1: 08:31 회차에 benchmark 1행 적립·멱등·결측 표시', as
   }
 });
 
-// ===== 배선 1b: 미설명 입금 감지 → flow_pending(확인 대기)·자동 확정 금지 =====
-test('배선1b: 입금 감지 → flow_pending 기록만·benchmark_flows 자동 0·멱등', async () => {
+// ===== 배선 1b: 미설명 '현금' 입금 감지(출사표 003 — 예수금 기준) =====
+test('배선1b: 예수금 +20만(미설명) → flow_pending 기록만·benchmark_flows 자동 0·멱등', async () => {
   const s = await boot();
   try {
     ledger.append('daily_account_snapshot', { id: 'p0', snapshot_date: '2026-11-24', account_type: 'real', start_total_eval: 1000000, start_cash: 900000, created_at: '2026-11-24T08:30:00+09:00' }, { dataDir: s.dir });
-    s.opts.providers.accountSnapshot = (acct) => ({ account_type: acct, start_total_eval: acct === 'real' ? 1200000 : 1000000, start_cash: 900000 });
+    s.opts.providers.accountSnapshot = (acct) => ({ account_type: acct, start_total_eval: 1200000, start_cash: acct === 'real' ? 1100000 : 900000 });
     await shadow.runOnce(at(s, '08:31:30'));
     const fp = rows(s.dir, 'flow_pending');
     assert.equal(fp.length, 1, '감지 1건');
-    assert.equal(fp[0].amount, 200000);
+    assert.equal(fp[0].amount, 200000, '현금 기준 +20만');
     assert.equal(fp[0].status, 'awaiting_confirm');
     const st = state.read('benchmark_flows', { dataDir: s.dir });
     assert.ok(!st || st.items.length === 0, '자동 recordFlow 0');
@@ -150,15 +150,15 @@ test('배선1b: 입금 감지 → flow_pending 기록만·benchmark_flows 자동
   }
 });
 
-// ===== 배선 1c: 손익으로 설명되는 변동은 감지하지 않음 =====
-test('배선1c: captive 손익으로 설명되는 변동은 flow_pending 미기록', async () => {
+// ===== 배선 1c: 체결 현금 흐름(order_log)으로 설명되면 감지 0 =====
+test('배선1c: 매도 대금으로 설명되는 예수금 증가는 flow_pending 미기록', async () => {
   const s = await boot();
   try {
     ledger.append('daily_account_snapshot', { id: 'p0', snapshot_date: '2026-11-24', account_type: 'real', start_total_eval: 1000000, start_cash: 900000, created_at: '2026-11-24T08:30:00+09:00' }, { dataDir: s.dir });
-    ledger.append('captive_ledger', { id: 'c1', account_type: 'real', trade_date: '2026-11-24', order_log_id: 'o', realized_pnl: 200000, loss_outstanding_after: 0, captives_after: 0, merit_delta: 200000, merit_total_after: 200000, created_at: '2026-11-24T15:30:00+09:00' }, { dataDir: s.dir });
-    s.opts.providers.accountSnapshot = (acct) => ({ account_type: acct, start_total_eval: acct === 'real' ? 1200000 : 1000000, start_cash: 900000 });
+    ledger.append('order_log', { id: 'o1', account_type: 'real', symbol: '005930', side: 'sell', order_type: 'limit', price: 20000, qty: 10, amount: 200000, status: 'filled', block_reason: null, broker_order_no: 'X', filled_at: '2026-11-24T10:00:00+09:00', created_at: '2026-11-24T10:00:00+09:00' }, { dataDir: s.dir });
+    s.opts.providers.accountSnapshot = (acct) => ({ account_type: acct, start_total_eval: 1000000, start_cash: acct === 'real' ? 1100000 : 900000 });
     await shadow.runOnce(at(s, '08:31:30'));
-    assert.equal(rows(s.dir, 'flow_pending').length, 0, '설명되는 변동 — 감지 0');
+    assert.equal(rows(s.dir, 'flow_pending').length, 0, '매도 대금 설명 — 감지 0');
   } finally {
     await down(s);
   }

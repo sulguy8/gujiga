@@ -38,13 +38,13 @@ async function buildProviders() {
     kodexBar = bars[bars.length - 1]; // {date, close, source:'krx_official'}
   } catch (e) { /* 결측 */ }
 
-  // 체결조회(모의) — 회군 감지용. 당일 매도 체결 행을 shadow 포맷으로 변환.
+  // 체결조회(모의) — 회군 감지용. pdno(종목코드)로 직접 매칭(출사표 003 — 역변환 제거).
+  // pdno가 비면 shadow가 그 행을 회군 감지에서 건너뛰고 기록한다.
   async function fetchFills(ymd) {
     const f = await gate.query('mock', 'fills', [ymd], gateOpts);
-    const name2sym = Object.fromEntries(positions.map((p) => [p.name, p.symbol]));
     return (f.rows || []).map((r) => ({
       odno: r.odno,
-      symbol: name2sym[r.name] || null,
+      symbol: r.symbol || null, // 어댑터가 pdno를 실어 준다
       side: /매도/.test(r.side) ? 'sell' : 'buy',
       filled: r.filled, avgFill: r.avgFill, remain: r.remain,
     }));

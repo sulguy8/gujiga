@@ -91,7 +91,7 @@ function fakeKisServer(overrides) {
         return reply({ rt_cd: '0', msg1: '정상', output: { KRX_FWDG_ORD_ORGNO: '00950', ODNO: '0000117058' } });
       }
       if (u.pathname.endsWith('/trading/inquire-daily-ccld')) {
-        return reply({ rt_cd: '0', msg1: '정상', output1: [{ ord_gno_brno: '00950', odno: '0000117057', orgn_odno: '', sll_buy_dvsn_cd_name: '매수', prdt_name: '삼성전자', ord_qty: '3', ord_unpr: '61500', tot_ccld_qty: '0', avg_prvs: '0', rmn_qty: '3', cncl_yn: 'Y', ord_tmd: '093000' }] });
+        return reply({ rt_cd: '0', msg1: '정상', output1: [{ ord_gno_brno: '00950', odno: '0000117057', orgn_odno: '', sll_buy_dvsn_cd_name: '매수', prdt_name: '삼성전자', pdno: '005930', ord_qty: '3', ord_unpr: '61500', tot_ccld_qty: '0', avg_prvs: '0', rmn_qty: '3', cncl_yn: 'Y', ord_tmd: '093000' }] });
       }
       reply({ rt_cd: '1', msg1: '알 수 없는 경로' });
     });
@@ -179,6 +179,7 @@ test('시나리오2~5: order/modify/cancel/fills/balance — 모의 TR ID·파�
 
     const f = await s.api.fills('20261125');
     assert.equal(f.rows[0].odno, '0000117057', '체결조회 재확인');
+    assert.equal(f.rows[0].symbol, '005930', '종목코드(pdno) 포함 — 출사표 003');
 
     // TR ID 검증(모의 V 프리픽스 — kis_client.js 그대로)
     const tr = (p) => s.mockSrv.received.filter((r) => r.path.endsWith(p)).map((r) => r.trId);
