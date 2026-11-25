@@ -223,3 +223,48 @@ test('AC4: 판정 결과·근거가 스냅샷에 기록돼 재현 가능', () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// =====================================================================
+// TSK-016 보완 (군주 확정 2026-11-25): 중단 회복은 수동만 + 외국인 미검증 태그
+// =====================================================================
+
+test('보완: 중단 자동 해제 금지 — manualRecoverHalt로만 해제·기록', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gujiga-tst015h-'));
+  try {
+    // 1차 → 재이탈 → halt 기록
+    judge.recordStage('s1', { dataDir: dir });
+    let h = judge.getStageHistory({ dataDir: dir });
+    const r1 = judge.judgeStage([{ no: 2, on: true }, { no: 3, on: true }], Object.assign({}, h, { reentryBreak: true }));
+    assert.equal(r1.stage, 'halt');
+    judge.recordStage('halt', { dataDir: dir });
+
+    // 신호가 아무리 좋아도(4개·6번) 자동 해제 없음
+    h = judge.getStageHistory({ dataDir: dir });
+    assert.equal(h.prevStage, 'halt');
+    assert.notEqual(h.recovered, true, '자동 recovered 없음');
+    const good = [1, 2, 3, 4].map((no) => ({ no, on: true })).concat([{ no: 5, on: false }, { no: 6, on: true }]);
+    assert.equal(judge.judgeStage(good, h).stage, 'halt', '자동 해제 금지');
+
+    // 군주 수동 해제 → 기록 + 다음 판정부터 재산출
+    const rec = judge.manualRecoverHalt({ dataDir: dir }, '기준 저점 회복 확인 — 군주');
+    assert.equal(rec.ok, true);
+    h = judge.getStageHistory({ dataDir: dir });
+    assert.equal(h.recovered, true, '수동 해제 반영');
+    assert.equal(judge.judgeStage(good, h).stage, 's3', '해제 후 재산출');
+
+    // 해제 기록(장부) 확인
+    const paths2 = require('../src/paths');
+    const d = paths2.ledgerDir(dir, 'stage_log');
+    const rows = fs.readdirSync(d).flatMap((f) => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(JSON.parse));
+    assert.ok(rows.some((r) => r.action === 'manual_recover' && /군주/.test(r.note)), '수동 해제 기록');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('보완: 외국인 미검증 태그 — 신호 4번 근거에 (미검증) 표기', () => {
+  const r = judge.judgeSignals(inp({ foreign_net_days: 2, foreign_unverified: true }));
+  const s4 = signalNo(r, 4);
+  assert.equal(s4.on, true, '판정은 수행');
+  assert.match(s4.basis, /미검증/, '미검증 태그');
+});

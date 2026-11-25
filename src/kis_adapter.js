@@ -183,8 +183,7 @@ async function make(env, opts) {
     },
 
     // 지수 일봉(KRX 공식) — 코스피 '0001'·코스닥 '1001'. source='krx_official' 태그.
-    // ※ TR FHKUP03500100·FID_COND_MRKT_DIV_CODE='U'는 refs/api에 실검증 기록이 없다(미검증) —
-    //    KIS 공식 OpenAPI 문서의 '국내주식업종기간별시세' 기준. 실수집 관찰 1일(TST-014)에서 확인한다.
+    // TR FHKUP03500100·FID_COND_MRKT_DIV_CODE='U' — **확정**(군주 확정 2026-11-25, 한투 공식 GitHub 예제 기준).
     async dailyIndexCandle(indexCode, days) {
       const ymd = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
       const end = new Date();
@@ -203,6 +202,29 @@ async function make(env, opts) {
         vol: +x.acml_vol,
         source: 'krx_official',
       })).reverse();
+    },
+
+    // 시장별 투자자 매매동향(일별) — 코스피 외국인 순매수(REQ-022).
+    // TR FHPTJ04040000 — **확정**(군주 확정 2026-11-25, 한투 공식 GitHub 예제 기준).
+    // ※ 응답의 외국인 순매수 '필드명'(현재 frgn_ntby_tr_pbmn 가정)은 실관찰 1일에서 확인 항목
+    //    (docs/investor_tr_proposal.md) — 확인 전까지 이 값은 '미검증' 태그로 다룬다.
+    async investorDaily(days) {
+      const ymd = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+      const end = new Date();
+      const start = new Date(Date.now() - (days || 10) * 864e5);
+      const j = await call('GET', '/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market', 'FHPTJ04040000', {
+        FID_COND_MRKT_DIV_CODE: 'U', FID_INPUT_ISCD: '0001',
+        FID_INPUT_DATE_1: ymd(start), FID_INPUT_DATE_2: ymd(end),
+        FID_INPUT_ISCD_1: 'KSP', FID_INPUT_ISCD_2: '0001',
+      });
+      if (j.rt_cd !== '0') throw new Error('투자자 동향 조회 실패 ' + (j.msg1 || '').trim());
+      const rows = (j.output || j.output1 || []).filter((x) => x.stck_bsop_date).map((x) => ({
+        date: `${x.stck_bsop_date.slice(0, 4)}-${x.stck_bsop_date.slice(4, 6)}-${x.stck_bsop_date.slice(6, 8)}`,
+        foreignNet: +(x.frgn_ntby_tr_pbmn != null ? x.frgn_ntby_tr_pbmn : x.frgn_ntby_qty), // 필드명 실관찰 확인 항목
+      }));
+      // 최신 먼저로 정렬
+      rows.sort((a, b) => b.date.localeCompare(a.date));
+      return rows;
     },
 
     // 잔고

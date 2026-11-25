@@ -99,9 +99,19 @@ async function overnightWeb(date, opts) {
   return out;
 }
 
-// ④ 외국인 순매수 — TR 미확정(제안서: docs/investor_tr_proposal.md). 확정 전까지 항상 결측.
-function investorKis() {
-  return { missing: true, reason: 'tr_unconfirmed — 군사 검토 대기(docs/investor_tr_proposal.md)' };
+// ④ 외국인 순매수 — TR FHPTJ04040000 확정(군주 2026-11-25). 응답 '필드명'은 실관찰 확인 전 — '미검증' 태그.
+// 연속 일수: 최신일의 순매수 부호가 이어지는 일수(순매도면 음수).
+async function investorKis(opts) {
+  const rows = await gate.query('real', 'investorDaily', [10], opts); // 최신 먼저
+  if (!rows || rows.length === 0) throw new Error('투자자 동향 0건');
+  const sign = Math.sign(rows[0].foreignNet);
+  if (sign === 0) return { net_days: 0, unverified: true };
+  let n = 0;
+  for (const r of rows) {
+    if (Math.sign(r.foreignNet) !== sign) break;
+    n++;
+  }
+  return { net_days: sign * n, unverified: true };
 }
 
 // --- 수집 오케스트레이션: 한 번에 모아 judgeInputs(판정 입력)와 참고값을 분리해 반환 ---
@@ -139,12 +149,16 @@ async function collect(opts) {
     missing.push('night_future_pct', 'us_summary');
   }
 
-  // ④ 외국인 — TR 미확정 결측
-  const inv = investorKis();
-  if (inv.missing) missing.push('foreign_net_days');
-  else {
+  // ④ 외국인 — TR 확정, 필드명 미검증 태그. 실패 시 결측(대체 금지)
+  const unverified = [];
+  try {
+    const inv = await investorKis(opts);
     judgeInputs.foreign_net_days = inv.net_days;
+    judgeInputs.foreign_unverified = true; // 신호 4번 근거에 (미검증) 표기
     sources.foreign_net_days = 'kis_investor';
+    unverified.push('foreign_net_days');
+  } catch (e) {
+    missing.push('foreign_net_days');
   }
 
   // 장부 값: 기준 저점·이벤트 캘린더(사람 관리)
@@ -164,7 +178,7 @@ async function collect(opts) {
   if (intraday) sources.intraday = 'naver_intraday';
   else missing.push('intraday');
 
-  return { date, judgeInputs, intraday, sources, missing };
+  return { date, judgeInputs, intraday, sources, missing, unverified };
 }
 
 // --- market_snapshot 기록(DAT-013): 1일 1행, 수정 금지 — 재판정은 새 버전 파일 ---
@@ -196,6 +210,7 @@ function saveSnapshot(collected, judgment, opts) {
     signals: judgment.signals || [],
     stage: judgment.stage,
     sources: collected.sources,
+    unverified: collected.unverified || [],
     missing: [...new Set([...(collected.missing || []), ...((judgment.missing) || [])])],
     created_at: new Date().toISOString(),
   };

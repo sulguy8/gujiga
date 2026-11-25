@@ -1,6 +1,14 @@
 # 외국인 순매수(투자자 동향) KIS TR id 제안서
 
-상태: **미확정 — 군사 검토 대기** (TSK-015 AC5 / ARC-008 미결 1 / REQ-022 미확정 항목)
+상태(2026-11-25 갱신): **TR 확정 — `FHPTJ04040000`** (군주 확정, 한투 공식 GitHub 예제 기준)
+- 경로 `GET /uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market`
+- 파라미터 `FID_COND_MRKT_DIV_CODE='U'`, `FID_INPUT_ISCD='0001'`, `FID_INPUT_DATE_1/2=조회일`, `FID_INPUT_ISCD_1='KSP'`, `FID_INPUT_ISCD_2='0001'`
+- **잔여 확인 항목(실관찰 1일)**: 응답의 외국인 순매수 **필드명**(현재 `frgn_ntby_tr_pbmn` 가정 — 가짜 서버 fixture 기준).
+  확인 전까지 이 값·신호 4번은 **'미검증' 태그**로 표기된다.
+- 지수 일봉 `FHKUP03500100`(U·0001)도 함께 **확정**.
+
+---
+(이하 원제안 — 이력 보존)
 
 ## refs/api 확인 결과
 

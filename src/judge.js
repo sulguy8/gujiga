@@ -77,11 +77,12 @@ function judgeSignals(inp) {
     });
   }
 
-  // 4. 코스피 외국인 순매수 2일 연속
+  // 4. 코스피 외국인 순매수 2일 연속 — 필드명 실관찰 확인 전에는 '(미검증)' 태그(TSK-015 보완)
   if (!isNum(inp.foreign_net_days)) {
     signals.push({ no: 4, on: false, basis: '외국인 동향 결측(보수 꺼짐)', missing: true });
   } else {
-    signals.push({ no: 4, on: inp.foreign_net_days >= 2, basis: `외국인 순매수 연속 ${inp.foreign_net_days}일` });
+    const tag = inp.foreign_unverified ? ' (미검증 — 필드 실관찰 확인 전)' : '';
+    signals.push({ no: 4, on: inp.foreign_net_days >= 2, basis: `외국인 순매수 연속 ${inp.foreign_net_days}일${tag}` });
   }
 
   // 5. 큰 이벤트: 2거래일 내 남아 있으면 꺼짐. 통과 후 다음 날 -1.5% 이상 하락 없으면 켜짐.
@@ -144,6 +145,36 @@ function judgeAll(inputs, history) {
   return { weather: w.weather, weatherBasis: w.basis, signals, stage: st.stage, stageBasis: st.basis, missing };
 }
 
+// --- 단계 이력(중단 유지·수동 해제 — TSK-016 보완) ---
+// 중단(halt)의 자동 해제는 금지다. 해제는 군주의 수동 함수(manualRecoverHalt)로만 하며 장부에 기록한다.
+const crypto = require('node:crypto');
+const ledger = require('./ledger');
+
+function getStageHistory(opts) {
+  const s = state.read('stage_state', opts) || {};
+  return { prevStage: s.prevStage || 'wait', recovered: s.recovered === true };
+}
+// 판정 후 현재 단계를 기록(다음 판정의 prevStage). halt 기록 시 recovered는 해제 전까지 false.
+function recordStage(stage, opts) {
+  const cur = state.read('stage_state', opts) || {};
+  state.write('stage_state', {
+    prevStage: stage,
+    recovered: stage === 'halt' ? false : cur.recovered === true && stage === 'halt' ? false : false,
+    updated_at: new Date().toISOString(),
+  }, opts);
+}
+// 군주 수동 해제 — 유일한 halt 해제 경로. note(사유) 필수, stage_log 원장에 기록.
+function manualRecoverHalt(opts, note) {
+  if (!note || !String(note).trim()) throw new Error('해제 사유(note) 필수');
+  const cur = state.read('stage_state', opts) || {};
+  state.write('stage_state', Object.assign({}, cur, { recovered: true, updated_at: new Date().toISOString() }), opts);
+  ledger.append('stage_log', {
+    id: crypto.randomUUID(), action: 'manual_recover', note: String(note),
+    created_at: new Date().toISOString(),
+  }, opts);
+  return { ok: true };
+}
+
 // --- 기준 저점 갱신(장부 '재진입 기록' 수정 — 판정 함수와 분리된 유일한 쓰기) ---
 function updateBaseLow(newLow, date, opts) {
   const cur = state.read('reentry_record', opts) || {};
@@ -154,4 +185,7 @@ function updateBaseLow(newLow, date, opts) {
   return { updated: true, base: newLow };
 }
 
-module.exports = { judgeWeather, judgeSignals, judgeStage, judgeAll, canSortieChok, updateBaseLow };
+module.exports = {
+  judgeWeather, judgeSignals, judgeStage, judgeAll, canSortieChok,
+  updateBaseLow, getStageHistory, recordStage, manualRecoverHalt,
+};
