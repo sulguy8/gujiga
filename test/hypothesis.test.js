@@ -278,7 +278,7 @@ test('시나리오7·8: patterns.md 이관 — 20개 전수·상태 원본 일�
     const st = (c) => all.find((h) => h.code === c);
     for (const c of ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'C1', 'C5']) assert.equal(st(c).status, 'testing', `${c} 검증 중`);
     for (const c of ['A4', 'A5', 'A6', 'B4', 'B5', 'B6', 'C2', 'C3', 'C4']) assert.equal(st(c).status, 'hypothesis', `${c} 가설`);
-    for (const c of ['D1', 'D2', 'D3']) assert.equal(st(c).status, 'verified', `${c} 사용 중`);
+    for (const c of ['D1', 'D2', 'D3']) assert.equal(st(c).status, 'rule', `${c} 사용 중 → rule(군령류)`);
     assert.match(st('D3').original_status, /사용 중/, '원문 라벨 보존');
 
     // 판정식: 시세로 잴 수 있는 것만(A1·A3·A6), 나머지는 비움(군주 판정)

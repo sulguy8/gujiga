@@ -23,7 +23,7 @@ const calendar = require('./market_calendar');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'config', 'hypothesis.json');
 const CATEGORIES = new Set(['A', 'B', 'C', 'D', 'E']);
-const STATUSES = ['hypothesis', 'testing', 'verified', 'discarded'];
+const STATUSES = ['hypothesis', 'testing', 'verified', 'discarded', 'rule']; // rule=군령류(걸러내기) — 인용 불가·전이 없음
 
 function cfg(opts) {
   if (opts && opts.hypConfig) return opts.hypConfig;
@@ -69,11 +69,15 @@ function register(input, opts) {
   const code = input.code || `H${b.items.length + 1}`;
   const id = input.id || `HYP-${code}`;
   if (b.items.some((x) => x.id === id)) throw new Error(`이미 존재: ${id}`);
+  // verified는 등록으로 만들 수 없다 — 승격은 전이(testing→verified, 표본 조건)로만(증거 0 verified 경로 봉쇄)
+  if (input.status === 'verified') throw new Error('등록으로 verified 생성 불가 — 전이로만 승격(표본 10·출병 3 필요)');
   const h = {
     id, code, category: input.category, statement: input.statement.trim(),
     judge_expr: input.judge_expr || null,
     original_status: input.original_status || null,
     status: input.status || 'hypothesis',
+    // rule(군령류)은 출병 근거로 인용 불가(citable=false 고정)
+    citable: input.status === 'rule' ? false : input.citable !== false,
     evidence_count: 0, trade_count: 0, reference_only: true,
     created_at: new Date().toISOString(), status_changed_at: null,
   };
@@ -97,7 +101,7 @@ function transition(id, next, opts) {
   const b = book(opts);
   const h = b.items.find((x) => x.id === id);
   if (!h) throw new Error('가설 없음');
-  const allowed = { hypothesis: ['testing'], testing: ['verified', 'discarded'], verified: [], discarded: [] };
+  const allowed = { hypothesis: ['testing'], testing: ['verified', 'discarded'], verified: [], discarded: [], rule: [] };
   if (!(allowed[h.status] || []).includes(next)) {
     throw new Error(`허용되지 않은 전이(직행·역행 금지): ${h.status} → ${next} — 순서는 가설→검증 중→(검증됨|폐기)`);
   }
@@ -302,7 +306,7 @@ function escalatePending(today, opts) {
 const STATUS_MAP = [
   [/검증 중/, 'testing'],
   [/^가설/, 'hypothesis'],
-  [/사용 중/, 'verified'], // '사용 중' = 이미 규칙으로 사용(원문 라벨은 original_status에 보존)
+  [/사용 중/, 'rule'], // 군사 검토(2026-11-25): D계열 '사용 중'은 걸러내기 군령 — 출병 근거가 아님(citable=false)
 ];
 // 시세로 잴 수 있는 판정식만 등록(군사 지시) — 나머지는 비워서 군주 판정.
 const JUDGE_EXPRS = {
