@@ -180,7 +180,7 @@ test('시나리오3: 관직·병력·성·포로·전공 값이 장부와 일치
       }
       // 관직 카드: 태수 30만/3성
       assert.match(body, /태수/);
-      // 성 표: 카카오 4주×48,500 = 194,000원 → 병사 19명(1만원=1명, 반올림)
+      // 성 표: 카카오 4주×48,500 = 194,000원 → 병사 19명(1만원=1명, 버림)
       assert.match(body, /카카오/);
       assert.match(body, /19명/, '194,000원 → 병사 19명');
       // 포로·전공: captive_ledger 재계산과 일치(TSK-004 재사용) — 포로 0, 전공 20,000
@@ -314,8 +314,24 @@ test('에지: 빈 장부 — 전군 주둔 중·없음 표시, 오류 0', async 
   }
 });
 
-// ===== 에지: 155,000원 포지션 → 병사 환산 표시(1만원=1명, 반올림 16명) =====
-test('에지: 155,000원 포지션 병사 표시 = 16명(반올림, 소수점 없음)', async () => {
+// ===== 병법서 1조: 병사 = 1만원당 1명 '버림' / 포로는 '반올림' — 규칙 구분 =====
+test('병법서 1조: 병사는 버림, 포로는 반올림 — 두 환산이 구분된다', () => {
+  const board = require('../src/camp_board');
+  const captives = require('../src/captives');
+  // 병사: 버림
+  assert.equal(board.troopsOf(155000), 15, '155,000원 → 병사 15명(버림)');
+  assert.equal(board.troopsOf(9999), 0, '9,999원 → 병사 0명');
+  assert.equal(board.troopsOf(19999), 1, '19,999원 → 병사 1명');
+  // 포로: 반올림(그대로 유지)
+  assert.equal(captives.captivesOf(155000), 16, '155,000원 손실 → 포로 16명(반올림)');
+  assert.equal(captives.captivesOf(5000), 1, '5,000원 → 포로 1명(반올림)');
+  assert.equal(captives.captivesOf(4999), 0);
+  // 같은 입력에서 결과가 갈림을 명시(규칙 혼용 방지)
+  assert.notEqual(board.troopsOf(155000), captives.captivesOf(155000), '병사(버림) != 포로(반올림)');
+});
+
+// ===== 에지: 155,000원 포지션 → 병사 환산 표시(1만원=1명, 버림 15명) =====
+test('에지: 155,000원 포지션 병사 표시 = 15명(버림, 소수점 없음)', async () => {
   const dir = makeTmpDir();
   try {
     seed(dir, {
@@ -325,8 +341,9 @@ test('에지: 155,000원 포지션 병사 표시 = 16명(반올림, 소수점 �
     });
     await withServer(dir, {}, async (srv) => {
       const { body } = await request(srv.port);
-      assert.match(body, /16명/, '155,000원 → 16명');
+      assert.match(body, /15명/, '155,000원 → 15명(버림)');
       assert.ok(!body.includes('15.5'), '소수점 병사 없음');
+      assert.ok(!body.includes('16명'), '반올림(16명) 아님');
     });
   } finally {
     rm(dir);
