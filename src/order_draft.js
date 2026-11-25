@@ -58,6 +58,7 @@ function buildRow(ai, now, createdBy) {
     confirmed_at: null,
     created_by: createdBy,
     rationale: typeof ai.rationale === 'string' ? ai.rationale : null,
+    hypothesis_ids: Array.isArray(ai.hypothesis_ids) ? ai.hypothesis_ids : null,
     breach_date: ai.breach_date || null,
     created_at: now,
   };

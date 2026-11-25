@@ -113,6 +113,8 @@ async function boot(cfg) {
     updated_at: '2026-11-25T00:00:00+09:00',
   }, { dataDir: dir });
   state.write('watchlist', cfg.watchlist || [{ symbol: '005930', status: 'ready' }], { dataDir: dir });
+  // TSK-020: 매수 근거 가설(검증됨) 시드 — 기존 11종 회귀 유지
+  state.write('hypothesis_book', { items: [{ id: 'HYP-FIX-V', code: 'FV', category: 'A', statement: 'f', status: 'verified', evidence_count: 12, trade_count: 4, reference_only: false, created_at: 'x' }] }, { dataDir: dir });
   if (cfg.positions) state.write('positions', cfg.positions, { dataDir: dir });
   if (cfg.snapshot !== null) {
     ledger.append('daily_account_snapshot', Object.assign({
@@ -142,6 +144,7 @@ function draft(over) {
     entry_low: 61000, entry_high: 62000, stop_price: 59000, target_price: 66000,
     deadline: '2026-12-05', troops: 15,
     qty: 3, price: 61500, user_confirmed: true, created_by: 'human', reason: '테스트 출병',
+    hypothesis_ids: ['HYP-FIX-V'],
   }, over || {});
 }
 
@@ -427,6 +430,7 @@ test('실전 경로: aside_chat(confirmed·reason·7단계 통과)만 실전 전
   const policy = { realOrderPolicy: { aside_chat: true, ui: false, ai: false, system: false } };
   const base = {
     account_type: 'real', created_by: 'aside_chat', user_confirmed: true, reason: '군주 지시 매수',
+    hypothesis_ids: ['HYP-FIX-V'],
     symbol: '005930', side: 'buy', entry_low: 61500, entry_high: 61500,
     stop_price: 59000, target_price: 66000, deadline: '2026-12-05', troops: 18, qty: 3, price: 61500,
     nation: null,

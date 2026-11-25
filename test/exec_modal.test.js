@@ -67,7 +67,7 @@ function draftRow(over) {
     account_type: 'paper', nation: null, symbol: '005930', side: 'buy',
     entry_low: 61000, entry_high: 61500, stop_price: 59000, target_price: 66000,
     deadline: '2026-12-05', troops: 18, status: 'draft',
-    user_confirmed: false, confirmed_at: null, created_by: 'ai',
+    user_confirmed: false, confirmed_at: null, created_by: 'ai', hypothesis_ids: ['HYP-FIX-V'],
     rationale: '신호등 3/6', created_at: '2026-11-25T08:31:12+09:00',
   }, over || {});
 }
@@ -85,6 +85,7 @@ async function boot(cfg) {
     daily_loss_limit: -50000, stop_file_path: path.join(dir, 'STOP'),
     cash_ratio_min: 0.3, correlation_max: 0.7, sample_min: 10, updated_at: 'x',
   }, { dataDir: dir });
+  state.write('hypothesis_book', { items: [{ id: 'HYP-FIX-V', code: 'FV', category: 'A', statement: 'f', status: 'verified', evidence_count: 12, trade_count: 4, reference_only: false, created_at: 'x' }] }, { dataDir: dir });
   for (const d of cfg.drafts || []) ledger.append('order_draft', d, { dataDir: dir });
   const mockSrv = await fakeKis();
   const realSrv = await fakeKis();
