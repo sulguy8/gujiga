@@ -206,15 +206,17 @@ async function make(env, opts) {
 
     // 시장별 투자자 매매동향(일별) — 코스피 외국인 순매수(REQ-022).
     // TR FHPTJ04040000 — **확정**(군주 확정 2026-11-25, 한투 공식 GitHub 예제 기준).
-    // ※ 응답의 외국인 순매수 '필드명'(현재 frgn_ntby_tr_pbmn 가정)은 실관찰 1일에서 확인 항목
-    //    (docs/investor_tr_proposal.md) — 확인 전까지 이 값은 '미검증' 태그로 다룬다.
+    // 필드명 frgn_ntby_tr_pbmn — **실관찰 확인됨**(2026-11-25 실응답, 지령 007 — 태그 해제).
+    // 날짜 파라미터(기준일=오늘) 수정은 다음 실관찰에서 최신일 확인 전까지 '(미검증-날짜)'.
     async investorDaily(days) {
       const ymd = (d) => d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
       const end = new Date();
-      const start = new Date(Date.now() - (days || 10) * 864e5);
+      // 실관찰(2026-11-25, 지령 007): FID_INPUT_DATE_1을 기간 시작일로 주면 그 날짜가
+      // '조회 기준일'로 해석돼 그 이전 거래일까지만 내려왔다(최신 11-13 문제).
+      // 이 TR은 기준일에서 과거로 내려주는 형태 — 두 날짜 모두 '오늘'로 준다.
       const j = await call('GET', '/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market', 'FHPTJ04040000', {
         FID_COND_MRKT_DIV_CODE: 'U', FID_INPUT_ISCD: '0001',
-        FID_INPUT_DATE_1: ymd(start), FID_INPUT_DATE_2: ymd(end),
+        FID_INPUT_DATE_1: ymd(end), FID_INPUT_DATE_2: ymd(end),
         FID_INPUT_ISCD_1: 'KSP', FID_INPUT_ISCD_2: '0001',
       });
       if (j.rt_cd !== '0') throw new Error('투자자 동향 조회 실패 ' + (j.msg1 || '').trim());
@@ -224,9 +226,9 @@ async function make(env, opts) {
         // 실관찰(지령 006)용: 실제 응답에서 어느 필드가 쓰였는지 표식(값 아님)
         field: x.frgn_ntby_tr_pbmn != null ? 'frgn_ntby_tr_pbmn' : (x.frgn_ntby_qty != null ? 'frgn_ntby_qty' : 'none'),
       }));
-      // 최신 먼저로 정렬
+      // 최신 먼저로 정렬 + 요청 일수만큼만(1차 실관찰에서 300행이 통째로 내려왔음)
       rows.sort((a, b) => b.date.localeCompare(a.date));
-      return rows;
+      return rows.slice(0, days || 10);
     },
 
     // 잔고

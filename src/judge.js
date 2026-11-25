@@ -77,9 +77,11 @@ function judgeSignals(inp) {
     });
   }
 
-  // 4. 코스피 외국인 순매수 2일 연속 — 필드명 실관찰 확인 전에는 '(미검증)' 태그(TSK-015 보완)
+  // 4. 코스피 외국인 순매수 2일 연속 — 필드명은 실관찰(2026-11-25) 확인됨.
+  //    날짜 파라미터 수정 확인 전에는 '(미검증-날짜)' 결측 처리(지령 007).
   if (!isNum(inp.foreign_net_days)) {
-    signals.push({ no: 4, on: false, basis: '외국인 동향 결측(보수 꺼짐)', missing: true });
+    const tag = inp.foreign_date_unverified ? ' (미검증-날짜 — 날짜 수정 실관찰 확인 전)' : '';
+    signals.push({ no: 4, on: false, basis: `외국인 동향 결측${tag}(보수 꺼짐)`, missing: true });
   } else {
     const tag = inp.foreign_unverified ? ' (미검증 — 필드 실관찰 확인 전)' : '';
     signals.push({ no: 4, on: inp.foreign_net_days >= 2, basis: `외국인 순매수 연속 ${inp.foreign_net_days}일${tag}` });
