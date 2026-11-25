@@ -1,0 +1,6 @@
+{
+  "_comment": "허도 관문 설정 (TSK-017 / ARC-009 확정). 포트 62910(대시보드 62900·OCTET 62838 비충돌). host는 루프백만(코드가 비루프백 거부). token_file은 Aside 폴더에서 유일하게 쓰기 허용된 파일.",
+  "host": "127.0.0.1",
+  "port": 62910,
+  "token_file": "C:\\Users\\조용수\\.aside\\u\\1\\secrets\\gujiga_broker.token"
+}
