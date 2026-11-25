@@ -66,7 +66,8 @@ function computeState(accountType, opts) {
   const rows = readRows(accountType, opts);
   let s = { lossOutstanding: 0, meritTotal: 0 };
   for (const r of rows) s = captiveStep(s, r.realized_pnl);
-  return { lossOutstanding: s.lossOutstanding, captives: s.captives, meritTotal: s.meritTotal };
+  // 원장이 비어 있으면 captiveStep을 거치지 않아 s.captives가 없다 — 항상 재계산해 반환.
+  return { lossOutstanding: s.lossOutstanding, captives: captivesOf(s.lossOutstanding), meritTotal: s.meritTotal };
 }
 
 // 확정 손익 이벤트 1건을 기록한다. 이전 상태를 원장 재계산으로 구한 뒤 1스텝 진행해
