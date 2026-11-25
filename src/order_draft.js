@@ -78,6 +78,10 @@ function insertDraft(input, opts, createdBy) {
   if (bad) {
     return { saved: false, rejected: true, reason: `incomplete_${bad}` };
   }
+  // AI 초안은 근거(rationale) 필수 — REQ-017 "초안 생성 시 근거를 함께 적는다"(TSK-014).
+  if (createdBy === 'ai' && (typeof input.rationale !== 'string' || !input.rationale.trim())) {
+    return { saved: false, rejected: true, reason: 'incomplete_rationale' };
+  }
 
   const row = buildRow(input, now, createdBy);
   ledger.append('order_draft', row, opts);
