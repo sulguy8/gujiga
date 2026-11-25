@@ -64,7 +64,7 @@ function fakeKis() {
 function draftRow(over) {
   return Object.assign({
     id: 'D-' + Math.random().toString(36).slice(2, 8),
-    account_type: 'paper', nation: null, symbol: '005930', side: 'buy',
+    account_type: 'paper', nation: 'chok', symbol: '005930', side: 'buy',
     entry_low: 61000, entry_high: 61500, stop_price: 59000, target_price: 66000,
     deadline: '2026-12-05', troops: 18, status: 'draft',
     user_confirmed: false, confirmed_at: null, created_by: 'ai', hypothesis_ids: ['HYP-FIX-V'],

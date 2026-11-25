@@ -140,7 +140,7 @@ async function down(s) {
 // 성립 출사표(모의 매수 기본)
 function draft(over) {
   return Object.assign({
-    account_type: 'paper', nation: null, symbol: '005930', side: 'buy',
+    account_type: 'paper', nation: 'chok', symbol: '005930', side: 'buy',
     entry_low: 61000, entry_high: 62000, stop_price: 59000, target_price: 66000,
     deadline: '2026-12-05', troops: 15,
     qty: 3, price: 61500, user_confirmed: true, created_by: 'human', reason: '테스트 출병',

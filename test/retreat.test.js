@@ -104,7 +104,7 @@ async function bootGate() {
 }
 function buyDraft(troops, ids) {
   return {
-    account_type: 'paper', nation: null, symbol: '005930', side: 'buy',
+    account_type: 'paper', nation: 'chok', symbol: '005930', side: 'buy',
     entry_low: 10000, entry_high: 10000, stop_price: 9000, target_price: 12000,
     deadline: '2026-12-05', troops, qty: troops, price: 10000,
     user_confirmed: true, created_by: 'human', reason: 't', hypothesis_ids: ids,

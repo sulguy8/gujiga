@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const board = require('./camp_board');
+const nation = require('./nation');
 const hypothesis = require('./hypothesis');
 const merit = require('./merit');
 const benchmark = require('./benchmark');
@@ -163,6 +164,7 @@ function render(data, opts2) {
   } catch (e) { /* 집계 실패 시 생략 */ }
 
   // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
+  H.push('<p><a href="/nations">세력전 대시보드 (촉·위·오)</a></p>');
   H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
   H.push('<p class="muted" style="font-size:12px">읽기 전용 현황판 — 숫자는 장부 값 그대로. 참고용, 최종 결정은 본인.</p>');
   H.push('</main></body></html>');
@@ -284,6 +286,131 @@ function renderMerit(opts) {
   return H.join('\n');
 }
 
+// ====================== 세력전 대시보드(SCR-006 / TSK-023) — 읽기 전용 ======================
+
+const NATION_KO = { chok: '촉', wi: '위', o: '오' };
+const TRACK_KO = { chok: '트랙A(규칙 그대로)', wi: 'B-예약형(매복)', o: 'B-확인형' };
+
+// 주의 월요일(KST 날짜 문자열 기준)
+function mondayOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const dow = d.getUTCDay(); // 0=일
+  d.setUTCDate(d.getUTCDate() - ((dow + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function pct(x, digits) {
+  return (x * 100).toFixed(digits == null ? 1 : digits);
+}
+
+// 기준선 원장에서 나라별 최신 수익률(%): (value − invested) ÷ invested
+function benchNationReturns(opts) {
+  try {
+    const d = path.join(paths2.resolveDataDir(opts), 'ledger', 'benchmark');
+    if (!fs.existsSync(d)) return null;
+    const rows = fs.readdirSync(d)
+      .flatMap((f) => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(JSON.parse))
+      .filter((r) => r.nations && !r.missing)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const last = rows[rows.length - 1];
+    if (!last) return null;
+    const out = {};
+    for (const n of nation.NATIONS) {
+      const b = last.nations[n];
+      out[n] = b && b.invested ? (b.value - b.invested) / b.invested : null;
+    }
+    return out;
+  } catch (e) {
+    return null;
+  }
+}
+
+function renderNations(opts, weekParam) {
+  const today = (opts && opts.today) || new Date().toISOString().slice(0, 10);
+  const from = weekParam || mondayOf(today);
+  const to = addDays(from, 4);
+  const { ledgers, violations } = nation.computeLedger(opts);
+  const integ = nation.checkIntegrity(opts);
+  const weekly = nation.weeklyReport({ from, to }, opts);
+  const bench = benchNationReturns(opts);
+
+  const H = pageHead('세력전 — 촉·위·오');
+  if (!integ.ok) {
+    const n = integ.warnings.length;
+    H.splice(2, 0, `<div style="background:#b3261e;color:#fff;padding:8px 16px;font-weight:bold">장부 어긋남 — 정합성 경고 ${n}건: 저장 장부와 체결 재계산이 다르다. 일일 점검 필요</div>`);
+  }
+  if (violations.length) {
+    H.push(`<section><h3>귀속 위반</h3><p style="color:#b3261e">${violations.map(esc).join('<br>')}</p></section>`);
+  }
+
+  // 빈 상태: 세력전 기록 자체가 없음
+  const anyRows = nation.NATIONS.some((n) => weekly.nations[n].sorties > 0) ||
+    Object.values(ledgers).some((L) => L.cash !== L.allocated || L.position_value > 0 || L.realized_pnl !== 0);
+  const hasAnyHistory = (() => {
+    try {
+      const d = path.join(paths2.resolveDataDir(opts), 'ledger', 'order_log');
+      return fs.existsSync(d) && fs.readdirSync(d).length > 0;
+    } catch (e) { return false; }
+  })();
+  if (!anyRows && !hasAnyHistory) {
+    H.push('<section><p class="muted">출병 전 — 월요일 군의에서 개전합니다</p></section>');
+  }
+
+  // 나라별 카드
+  const perStockLimit = 250000;
+  const posLists = {};
+  for (const n of nation.NATIONS) {
+    posLists[n] = Object.entries(ledgers[n].positions || {}).filter(([, p]) => p.qty > 0);
+  }
+  for (const n of nation.NATIONS) {
+    const L = ledgers[n];
+    const open = posLists[n];
+    H.push(`<section><h2>${NATION_KO[n]} <span class="muted" style="font-size:12px">${TRACK_KO[n]}</span></h2>`);
+    H.push(`<p class="num">배정 ${won(L.allocated)}원 · 군량(현금) ${won(L.cash)}원 · 평가 ${won(L.position_value)}원</p>`);
+    const rPct = pct(L.return_rate);
+    let exText = '기준선 없음';
+    if (bench && bench[n] != null) {
+      const ex = L.return_rate - bench[n];
+      exText = `${(ex * 100).toFixed(1)}%p`;
+    }
+    H.push(`<p class="num">수익률 ${rPct}% · 기준선(KODEX 200 보유) 대비 초과 ${exText}</p>`);
+    H.push(`<p class="num">보유 성 ${open.length}/2성 · 실현손익 ${won(L.realized_pnl)}원</p>`);
+    if (open.length) {
+      H.push('<table><tr><th>성(종목)</th><th>투입</th><th>종목당 25만 사용률</th></tr>');
+      for (const [sym, p] of open) {
+        H.push(`<tr><td>${esc(sym)}</td><td class="num">${won(p.cost)}원</td><td class="num">${pct(p.cost / perStockLimit, 0)}%</td></tr>`);
+      }
+      H.push('</table>');
+    }
+    H.push('</section>');
+  }
+
+  // 주간 순위표(논공행상 — 월요일 군의용)
+  const ranked = nation.NATIONS.slice().sort((a, b) => weekly.nations[b].pnl - weekly.nations[a].pnl);
+  H.push(`<section><h2>주간 순위표 <span class="muted" style="font-size:12px">${esc(from)} ~ ${esc(to)}</span></h2>`);
+  H.push('<table><tr><th>순위</th><th>나라</th><th>손익</th><th>출병 수</th><th>매복 성공률</th></tr>');
+  ranked.forEach((n, i) => {
+    const w = weekly.nations[n];
+    const ambush = n !== 'wi' ? '해당 없음' : (w.ambush_rate == null ? '해당 없음(예약 0건)' : `${w.ambush_rate.toFixed(1)}%`);
+    H.push(`<tr><td>${i + 1}</td><td>${NATION_KO[n]}</td><td class="num">${won(w.pnl)}원</td><td class="num">${w.sorties}회</td><td>${ambush}</td></tr>`);
+  });
+  H.push('</table>');
+  H.push('<p class="muted" style="font-size:12px">손익: 그 주에 매도로 확정한 금액. 출병 수: 매수가 체결된 횟수. 매복 성공률: 걸어둔 예약 주문 중 실제 체결된 비율(예약 전술을 쓰는 위나라만 해당).</p>');
+  const prevWeek = addDays(from, -7);
+  const nextWeek = addDays(from, 7);
+  H.push(`<p><a href="/nations?week=${prevWeek}">이전 주</a> · <a href="/nations?week=${nextWeek}">다음 주</a> · <a href="/nations">이번 주</a></p>`);
+  H.push('</section>');
+
+  H.push('<p><a href="/">군영 현황판으로</a> · <a href="/merit">논공행상</a></p>');
+  H.push('<p class="muted" style="font-size:12px">읽기 전용 — 숫자는 모의 체결 장부에서 매번 재계산(저장값 신뢰 안 함).</p>');
+  H.push('</main></body></html>');
+  return H.join('\n');
+}
+
 function pageHead(title) {
   const H = [];
   H.push(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>`);
@@ -344,6 +471,20 @@ function start(opts) {
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(renderHypDetail(h, opts));
+      return;
+    }
+    if (url === '/nations') {
+      const week = new URL(req.url, 'http://x').searchParams.get('week');
+      let html;
+      try {
+        html = renderNations(opts, week);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('집계 실패');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
       return;
     }
     if (url === '/merit') {
