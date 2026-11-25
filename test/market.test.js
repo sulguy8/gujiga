@@ -152,11 +152,11 @@ test('시나리오1: 수집 1회로 market_snapshot 1행 생성(필수 필드·�
     assert.equal(c.judgeInputs.night_future_pct, -4.56, '야간선물(웹검색)');
     assert.equal(c.judgeInputs.us_summary.vix, 26.36);
     assert.equal(c.judgeInputs.sox_base_low, 8408.59, '기준 저점(장부)');
-    // 지령 007: 필드명은 실관찰 확인(해제), 날짜 수정은 '(미검증-날짜)' — 확인 전까지 신호 4 결측 처리
-    assert.equal(c.judgeInputs.foreign_net_days, null, '날짜 수정 확인 전 결측 처리(보수 꺼짐)');
-    assert.equal(c.judgeInputs.foreign_date_unverified, true);
-    assert.ok(c.missing.includes('foreign_net_days'));
-    assert.ok(c.unverified.includes('foreign_net_days(미검증-날짜)'), '(미검증-날짜) 태그');
+    // 지령 008: 필드명(지령 007)·날짜(재실관찰 2026-11-25 최신 행 확인) 모두 해제 — 정상 판정 복귀
+    assert.equal(c.judgeInputs.foreign_net_days, 1, '외국인 순매수 연속 1일(11/24 매수·11/23 매도)');
+    assert.equal(c.sources.foreign_net_days, 'kis_investor');
+    assert.ok(!c.unverified.some((u) => u.startsWith('foreign_net_days')), '미검증 태그 없음(해제)');
+    assert.ok(!c.missing.includes('foreign_net_days'), '결측 아님');
     // 날짜 파라미터(지령 007 수정): 기준일 — 두 날짜 모두 '오늘'로 보낸다(최신일이 오도록)
     const invReq = s.kisSrv.received.find((r) => r.path.endsWith('inquire-investor-daily-by-market'));
     const ymdNow = (() => { const d = new Date(); return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0'); })();
@@ -169,7 +169,7 @@ test('시나리오1: 수집 1회로 market_snapshot 1행 생성(필수 필드·�
     assert.equal(row.snapshot_date, '2026-11-25');
     assert.equal(row.weather, 'defense');
     assert.ok(row.sources && row.created_at && Array.isArray(row.signals), 'DAT-013 필수 필드');
-    assert.ok((row.unverified || []).includes('foreign_net_days(미검증-날짜)'), '스냅샷에도 (미검증-날짜) 태그');
+    assert.ok(!(row.unverified || []).some((u) => u.startsWith('foreign_net_days')), '스냅샷에도 미검증 태그 없음(해제)');
   } finally {
     await down(s);
   }
