@@ -1,0 +1,6 @@
+{
+  "_comment": "알림 단일 발신처 설정 (TSK-011 / ARC-006). 채널별 on/off. 텔레그램 봇 토큰은 여기 두지 않는다 — secret(DPAPI) 토큰 캐시 'telegram_bot'으로만(군주가 convert-secrets로 등록).",
+  "channels": { "os": true, "telegram": false },
+  "telegram": { "token_name": "telegram_bot" },
+  "deeplink_base": "http://127.0.0.1:62900"
+}
