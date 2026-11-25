@@ -1,0 +1,6 @@
+{
+  "_comment": "가설 승격 기준 (REQ-012·REQ-025 — 설정으로 관리). verified 전이: 증거 합계 ≥ evidence_min 그리고 출병(kind=trade) 증거 ≥ trade_min.",
+  "evidence_min": 10,
+  "trade_min": 3,
+  "pending_manual_after_trading_days": 3
+}
