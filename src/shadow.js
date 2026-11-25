@@ -33,12 +33,14 @@ const market = require('./market');
 const notify = require('./notify');
 const benchmark = require('./benchmark');
 const retreat = require('./retreat');
+const backup = require('./backup');
 
 const JOBS = [
   { name: 'snapshot_0830', time: '08:30', catchup: true },
   { name: 'council_0831', time: '08:31', catchup: true },
   { name: 'preclose_1505', time: '15:05', catchup: false, windowMin: 10 },
   { name: 'compare_1540', time: '15:40', catchup: true },
+  { name: 'backup_1550', time: '15:50', catchup: true },
 ];
 const SCOUT_INTERVAL_MIN = 5;
 const MISSED_SCAN_DAYS = 7;
@@ -480,6 +482,13 @@ async function runOnce(opts) {
     const row = compareWithAside(date, opts);
     logJob('run', 'compare_1540', date, opts, { match: row.match, aside_missing: row.aside_missing });
     ran.push('compare_1540');
+  }
+
+  // 15:50 gujiga-data 백업(지령 005) — 하루 1회. 주문 경로와 무관, 실패해도 기록만.
+  if (minutes >= toMin('15:50') && !hasRec(log, 'backup_1550', date)) {
+    const b = backup.runBackup({ dataDir: opts.dataDir });
+    logJob('run', 'backup_1550', date, opts, { committed: b.committed, pushed: b.pushed, skipped: b.skipped, reason: b.reason });
+    ran.push('backup_1550');
   }
 
   return { trading: true, date, ran, missed };

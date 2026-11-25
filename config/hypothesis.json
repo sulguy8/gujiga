@@ -1,5 +1,7 @@
 {
   "_comment": "가설 승격 기준 (REQ-012·REQ-025 — 설정으로 관리). verified 전이: 증거 합계 ≥ evidence_min 그리고 출병(kind=trade) 증거 ≥ trade_min.",
+  "_comment_mode": "손자약해 정본 규칙(지령 005, 이관 전까지): mode=practice — 정본은 Aside 쪽 trading/playbook/patterns.md이고, gujiga 가설 장부는 연습장(그림자 운용 관찰 증거만 쌓음). 이관하는 날 bin/reimport-patterns.js로 재이관.",
+  "mode": "practice",
   "evidence_min": 10,
   "trade_min": 3,
   "pending_manual_after_trading_days": 3

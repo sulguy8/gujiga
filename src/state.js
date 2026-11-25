@@ -46,6 +46,11 @@ function write(name, value, opts) {
 //   2) dataDir가 자체 git 저장소면                → 거기에 커밋.
 //   3) dataDir가 어떤 git 저장소도 아니면          → git init(원격 설정 금지) 후 커밋.
 // 전역 git 설정에 의존하지 않도록 user.name/email을 -c로 주입한다.
+//
+// '원격 설정 금지' 예외(군주 결정, 2026-11-25 지령 005): 비공개 백업 원격 1개
+// (GitHub sulguy8/gujiga-data, PRIVATE)에 한해 해제 — push는 src/backup.js가
+// 이미 연결된 origin으로만 한다. 코드가 원격을 만들거나 바꾸는 것은 여전히 금지
+// (원격 생성·연결은 사람이 수동 1회). 이 모듈(state.js)의 동작은 변경 없음.
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
