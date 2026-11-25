@@ -15,6 +15,7 @@
 // 기록은 ledger.append만 사용(직접 파일 쓰기 금지).
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
 const crypto = require('node:crypto');
@@ -26,8 +27,23 @@ const orderDraft = require('./order_draft');
 // 기능 4종(ARC-007): 군의 해석·출사표 초안·전략 건의·통찰.
 const FEATURES = new Set(['counsel', 'draft', 'advise', 'insight']);
 
-// claude 호출 인자 — '도구 0개'를 명시(지시1). 프롬프트는 stdin으로 전달.
-const CLAUDE_ARGS = ['-p', '--allowedTools', ''];
+// --- 무도구 실행 격리 (군사 검토 반영) ---
+// claude 2.1.216 확인: `--tools ""` = 내장 도구 전부 비활성("disable all tools").
+//   => 읽기 도구(Read/Grep 등)조차 허락 없이 동작하지 못한다('--allowedTools ""'로는 불충분했음).
+// 추가로 MCP 차단(--strict-mcp-config + 빈 mcp 설정), cwd·env 격리를 함께 건다.
+// 참고(방어 심층): 내장 도구 목록 — Bash·Read·Write·Edit·Glob·Grep·WebFetch·WebSearch·NotebookEdit·Task 등.
+const BUILTIN_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'NotebookEdit', 'Task'];
+
+// 자식 프로세스에 넘길 환경변수 '허용 목록'(allowlist) — 최소한만.
+// GUJIGA_*·KIS·토큰류는 목록에 없어 자동 제외되고, 이중으로도 걸러낸다.
+const ENV_ALLOW = [
+  'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR',
+  'ComSpec', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR',
+  'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'HOME', 'APPDATA', 'LOCALAPPDATA',
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'USER', 'USERNAME', 'LOGNAME',
+  'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'SHELL',
+];
+const ENV_DENY = /^GUJIGA_|kis|secret|token|api[_-]?key/i;
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'strategist.json');
 
@@ -35,9 +51,35 @@ const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'strategist.jso
 function exposedTools() {
   return [];
 }
-// 호출 인자(복사본) — 테스트/리뷰에서 '도구 비허용'을 확인 가능.
+
+// 빈 MCP 설정 파일 경로(없으면 생성) — cwd 밖(공용 temp)에 두어 cwd는 빈 상태 유지.
+function emptyMcpConfigPath() {
+  const dir = path.join(os.tmpdir(), 'gujiga-strategist');
+  fs.mkdirSync(dir, { recursive: true });
+  const p = path.join(dir, 'mcp-empty.json');
+  if (!fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify({ mcpServers: {} }), 'utf8');
+  return p;
+}
+
+// claude 호출 인자(복사본) — 무도구 + MCP 차단. 프롬프트는 stdin으로 전달.
 function claudeArgs() {
-  return CLAUDE_ARGS.slice();
+  return ['-p', '--tools', '', '--strict-mcp-config', '--mcp-config', emptyMcpConfigPath()];
+}
+
+// 최소 환경변수(allowlist) — 민감/프로젝트 변수는 자식에 넘기지 않는다.
+function minimalEnv() {
+  const out = {};
+  for (const k of Object.keys(process.env)) {
+    if (!ENV_ALLOW.includes(k)) continue;
+    if (ENV_DENY.test(k)) continue;
+    out[k] = process.env[k];
+  }
+  return out;
+}
+
+// 매 호출마다 비어 있는 임시 cwd(저장소·홈 밖) — claude를 여기서 실행한다.
+function freshCwd() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'gujiga-claude-cwd-'));
 }
 
 function loadConfig(opts) {
@@ -92,6 +134,12 @@ const OUTPUT_HINT = {
   advise: 'JSON: { criterion: 1~4, evidence, change_plan, keep_plan }',
   insight: 'JSON: { anecdotes:[1~2], options:{top,mid,low}, recommend, note:"최종 선택은 군주" }',
 };
+
+// 마크다운 코드 펜스(```json … ```)에 싸인 JSON을 벗겨낸다. 펜스 밖 부가 설명은 무시.
+function stripFence(s) {
+  const m = s.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  return (m ? m[1] : s).trim();
+}
 
 // ---- degrade 최소 보고 ----
 function minimalReport(feature, payload) {
@@ -152,21 +200,27 @@ function call(feature, payload, opts) {
     }
   }
 
-  // 2) 프롬프트 구성 + claude -p 호출(도구 0개)
+  // 2) 프롬프트 구성 + claude 호출(무도구·MCP차단·cwd/env 격리)
   const prompt = buildInput(feature, payload);
   const bin = opts.claudeBin || 'claude';
-  const args = [...(opts.claudeArgsPrefix || []), ...CLAUDE_ARGS];
+  const args = [...(opts.claudeArgsPrefix || []), ...claudeArgs()];
+  const spawn = opts.spawn || cp.spawnSync;
 
+  const cwd = freshCwd(); // 저장소·홈이 아닌 빈 임시 폴더에서 실행
   let result;
   try {
-    result = cp.spawnSync(bin, args, {
+    result = spawn(bin, args, {
       input: prompt,
       encoding: 'utf8',
+      cwd,
+      env: minimalEnv(), // PATH 등 최소만, GUJIGA_*·KIS 제외
       maxBuffer: 4 * 1024 * 1024,
       timeout: opts.timeout || 120000,
     });
   } catch (e) {
     result = { error: e };
+  } finally {
+    try { fs.rmSync(cwd, { recursive: true, force: true }); } catch (e) {}
   }
 
   // 3) CLI 부재·실패 → degrade(재호출 없음)
@@ -177,9 +231,10 @@ function call(feature, payload, opts) {
   }
 
   // 4) 출력 파싱 — 실패 시 해당 기능만 생략, 재호출 없음
+  // 실관측(카나리아 2026-11-25): claude가 JSON을 ```json 펜스로 감싸 반환하는 경우가 있어 벗겨낸다.
   let data;
   try {
-    data = JSON.parse(String(result.stdout || '').trim());
+    data = JSON.parse(stripFence(String(result.stdout || '')));
   } catch (e) {
     logEvent('degrade', feature, today, opts, { reason: 'parse_failed' });
     return { ok: false, degraded: true, feature, reason: 'parse_failed', report: minimalReport(feature, payload) };
