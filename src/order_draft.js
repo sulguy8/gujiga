@@ -37,8 +37,9 @@ function validate(d) {
   return null;
 }
 
-// AI 출력으로부터 강제된 order_draft 행을 만든다(실행 플래그는 항상 꺼짐).
-function buildRow(ai, now) {
+// 출력으로부터 강제된 order_draft 행을 만든다(실행 플래그는 항상 꺼짐).
+// createdBy는 'ai'(군사 엔진) 또는 'system'(자동 판정 — TSK-008)만 — 사람 값은 여기로 오지 않는다.
+function buildRow(ai, now, createdBy) {
   return {
     id: ai.id || crypto.randomUUID(),
     account_type: ai.account_type,
@@ -52,37 +53,47 @@ function buildRow(ai, now) {
     deadline: ai.deadline,
     troops: ai.troops,
     status: 'draft',
-    // === 강제 불변식(지시2 / REQ-017) — AI 출력값 무시 ===
+    // === 강제 불변식(REQ-017/REQ-008) — 입력값 무시 ===
     user_confirmed: false,
     confirmed_at: null,
-    created_by: 'ai',
+    created_by: createdBy,
     rationale: typeof ai.rationale === 'string' ? ai.rationale : null,
+    breach_date: ai.breach_date || null,
     created_at: now,
   };
 }
 
-// AI 출력을 검사해 order_draft에 INSERT한다.
-// 반환: { saved, rejected, reason, row }
-function insertAiDraft(ai, opts) {
+function insertDraft(input, opts, createdBy) {
   const now = (opts && opts.now) || new Date().toISOString();
 
-  if (!ai || typeof ai !== 'object') {
+  if (!input || typeof input !== 'object') {
     return { saved: false, rejected: true, reason: 'no_output' };
   }
   // 실행 플래그 조작 시도 → 저장 거부(TST-012 #2 / REQ-017 AC3).
-  if (ai.user_confirmed === true) {
+  if (input.user_confirmed === true) {
     return { saved: false, rejected: true, reason: 'flag_manipulation_user_confirmed' };
   }
   // 성립 검증(불성립 초안 생성 금지).
-  const bad = validate(ai);
+  const bad = validate(input);
   if (bad) {
     return { saved: false, rejected: true, reason: `incomplete_${bad}` };
   }
 
-  const row = buildRow(ai, now);
+  const row = buildRow(input, now, createdBy);
   ledger.append('order_draft', row, opts);
   return { saved: true, rejected: false, row };
 }
 
-// 의도적으로 insertAiDraft(와 검증기)만 노출 — 전송·확인 함수는 두지 않는다.
-module.exports = { insertAiDraft, validate, REQUIRED };
+// AI(군사 엔진) 출력을 검사해 INSERT — created_by='ai' 강제.
+function insertAiDraft(ai, opts) {
+  return insertDraft(ai, opts, 'ai');
+}
+
+// 자동 판정(손절 매도 등 — TSK-008)의 초안 INSERT — created_by='system' 강제.
+// 실행 확인은 똑같이 사람 몫(user_confirmed=false 고정, 전송 수단 없음).
+function insertSystemDraft(d, opts) {
+  return insertDraft(d, opts, 'system');
+}
+
+// 의도적으로 INSERT(와 검증기)만 노출 — 전송·확인 함수는 두지 않는다.
+module.exports = { insertAiDraft, insertSystemDraft, validate, REQUIRED };
