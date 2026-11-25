@@ -124,10 +124,16 @@ async function runChecks(draft, env, api, opts) {
       return { reason: 'no_rationale', detail: { ids: ids || null, note: '매수 출사표는 근거 가설 ID 1~3개 필수' } };
     }
     const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
+    let citableCount = 0;
     for (const hid of ids) {
       const h = bookItems.find((x) => x.id === hid);
       if (!h) return { reason: 'no_rationale', detail: { ids, note: `장부에 없는 가설: ${hid}` } };
       if (h.status === 'discarded') return { reason: 'no_rationale', detail: { ids, note: `폐기된 가설 인용: ${hid}` } };
+      if (h.citable !== false && h.status !== 'rule') citableCount++;
+    }
+    // rule(군령류)은 걸러내기 규칙 — 출병 근거가 아니다(군사 검토 2026-11-25)
+    if (citableCount === 0) {
+      return { reason: 'no_rationale', detail: { ids, note: 'rule(군령류)만 인용 — 인용 가능한 근거 가설 0' } };
     }
   }
 
