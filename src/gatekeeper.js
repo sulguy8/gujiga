@@ -1,9 +1,11 @@
 'use strict';
 
-// 허도 관문(gatekeeper) — 로컬 키 중계 서버 (TSK-017 / ARC-009 확정)
+// 허도 관문(gatekeeper) — 로컬 키 중계 서버 (TSK-017 / ARC-009, TSK-005에서 2단계 전환)
 //
-// gujiga 프로세스가 127.0.0.1 전용 HTTP 서버를 띄워 DPAPI 키를 메모리에서만 풀고
-// KIS 호출(kis-adapter)을 대행한다. Aside 루틴은 키를 영영 만지지 않는다.
+// gujiga 프로세스가 127.0.0.1 전용 HTTP 서버를 띄워 KIS 호출을 대행한다.
+// ARC-009 2단계(TSK-005): 주문 검사 로직을 관문 자체 검사에서 **단일 주문 게이트(gate.submit)**
+// 경유로 단일화했다 — 관문은 인증·전달만 하고, 7단계 검사·order_log 기록은 게이트가 한다.
+// kis_adapter는 이 모듈에서 직접 require하지 않는다(AC3 — gate만이 유일 통로).
 //
 // 보안(ARC-009):
 //  - 바인딩 127.0.0.1 전용(비루프백 설정 거부) + Host 헤더 검사(DNS 리바인딩 방지).
@@ -11,21 +13,16 @@
 //    모든 /call 요청에 x-gate-token 필수 — 없거나 틀리면 401.
 //  - 응답·로그에 키·KIS 토큰 값 기록 금지.
 //
-// 이중 잠금(게이트 TSK-005 완성 전): gujiga guard_config 기준 안전장치를 관문이 직접 강제 —
-//  STOP·지정가·실전 confirmed 필수·1회 한도·실전 매수 화이트리스트·하루 손실(스냅샷 없으면 차단).
-//  Aside 쪽 얇은 클라이언트의 guard.json 검사(1차 잠금)와 별개로 한 번 더 건다.
-//  모든 주문 시도(차단 포함)는 order_log 원장에 기록한다(DAT-002).
+// Aside 클라이언트 주문(지시5): created_by='aside_chat' 출사표로 변환해 게이트에 넣는다.
+//  reason은 필수(없으면 거부), confirmed 값·reason은 게이트가 order_log에 기록한다.
 
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
 
-const kis = require('./kis_adapter');
-const guard = require('./guard');
-const state = require('./state');
-const ledger = require('./ledger');
-const paths = require('./paths');
+const gate = require('./gate');
+const { kstParts } = require('./kst');
 
 const LOOPBACK = '127.0.0.1';
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'gatekeeper.json');
@@ -49,53 +46,27 @@ function hostAllowed(hostHeader) {
   return name === 'localhost' || name === LOOPBACK;
 }
 
-// 실전 매수 화이트리스트: watchlist 상태 파일(status !== 'excluded'). 목록이 없으면 차단(안전).
-function whitelisted(symbol, opts) {
-  const list = state.read('watchlist', opts);
-  if (!Array.isArray(list)) return false;
-  return list.some((w) => w.symbol === symbol && w.status !== 'excluded');
+// Aside 주문 호출 → 출사표(aside_chat) 변환(지시5).
+// 5항목은 opt로 받는다(stop_price·target_price·deadline — 출사표 없이 출병 금지 원칙 그대로).
+function asideDraft(env, side, symbol, qty, price, opt) {
+  opt = opt || {};
+  const today = kstParts(new Date()).date;
+  return {
+    account_type: env === 'real' ? 'real' : 'paper',
+    nation: opt.nation != null ? opt.nation : null,
+    symbol, side, qty, price,
+    entry_low: price, entry_high: price,
+    stop_price: opt.stop_price != null ? opt.stop_price : (opt.stop != null ? opt.stop : null),
+    target_price: opt.target_price != null ? opt.target_price : (opt.target != null ? opt.target : null),
+    deadline: opt.deadline || today,
+    troops: Math.max(1, Math.floor((qty * price) / 10000)),
+    user_confirmed: opt.confirmed === true,
+    created_by: 'aside_chat',
+    reason: opt.reason,
+  };
 }
 
-// 하루 손실 차단(실전 매수): 당일 스냅샷 없으면 차단(DAT-004), 기준 대비 한도 이하면 차단.
-async function dailyLossBlocked(api, g, opts) {
-  const dataDir = paths.resolveDataDir(opts);
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
-  const snapDir = paths.ledgerDir(dataDir, 'daily_account_snapshot');
-  let snap = null;
-  if (fs.existsSync(snapDir)) {
-    for (const f of fs.readdirSync(snapDir)) {
-      for (const line of fs.readFileSync(path.join(snapDir, f), 'utf8').split('\n')) {
-        if (!line.trim()) continue;
-        const r = JSON.parse(line);
-        if (r.snapshot_date === today && r.account_type === 'real') snap = r;
-      }
-    }
-  }
-  if (!snap) return 'no_snapshot'; // 스냅샷 없는 날 실전 매수 차단(안전 우선)
-  const b = await api.balance();
-  if (b.total - snap.start_total_eval <= g.daily_loss_limit) return 'daily_loss';
-  return null;
-}
-
-// 주문 전 이중 잠금 검사. 통과 시 null, 차단 시 사유 문자열.
-async function orderChecks(env, side, symbol, qty, price, opt, api, opts) {
-  const g = guard.loadGuard(opts);
-  if (!g) return 'guard_missing';
-  if (fs.existsSync(g.stop_file_path)) return 'stop_file';
-  if (!Number.isInteger(price) || price <= 0) return 'market_order'; // 지정가만
-  if (env === 'real' && !(opt && opt.confirmed === true)) return 'no_confirm';
-  const amt = qty * price;
-  const lim = env === 'real' ? g.per_order_limit_real : g.per_order_limit_paper;
-  if (amt > lim) return 'per_order_limit';
-  if (env === 'real' && side === 'buy') {
-    if (!whitelisted(symbol, opts)) return 'not_whitelisted';
-    const dl = await dailyLossBlocked(api, g, opts);
-    if (dl) return dl;
-  }
-  return null;
-}
-
-// opts: { dataDir, keysPath, port, host, tokenFile, baseUrls, gapMs, configPath }
+// opts: { dataDir, keysPath, port, host, tokenFile, baseUrls, gapMs, fillPollMs, fillPollMax, configPath }
 function start(opts) {
   opts = opts || {};
   const cfg = loadConfig(opts);
@@ -110,18 +81,12 @@ function start(opts) {
   fs.mkdirSync(path.dirname(cfg.tokenFile), { recursive: true });
   fs.writeFileSync(cfg.tokenFile, gateToken, 'utf8');
 
-  // env별 어댑터(지연 생성 — 키는 어댑터 클로저 메모리에만)
-  const adapters = {};
-  async function adapter(env) {
-    if (!adapters[env]) {
-      adapters[env] = await kis.make(env, {
-        dataDir: opts.dataDir, keysPath: opts.keysPath,
-        baseUrls: opts.baseUrls, gapMs: opts.gapMs,
-        // 실전 주문은 어댑터 차원에서도 비활성(TSK-012 전) — 관문 검사와 별개의 3중 방벽
-      });
-    }
-    return adapters[env];
-  }
+  // 게이트에 넘길 공통 옵션(어댑터 생성 정보 포함 — 키는 게이트/어댑터 안에서만)
+  const gateOpts = {
+    dataDir: opts.dataDir, keysPath: opts.keysPath,
+    baseUrls: opts.baseUrls, gapMs: opts.gapMs,
+    fillPollMs: opts.fillPollMs, fillPollMax: opts.fillPollMax,
+  };
 
   const server = http.createServer((req, res) => {
     const reply = (code, obj) => {
@@ -147,42 +112,34 @@ function start(opts) {
       }
       const { env, fn, args } = payload || {};
       if (!['mock', 'real'].includes(env)) return reply(400, { ok: false, error: 'bad_env' });
-      const ALLOWED = new Set(['price', 'balance', 'fills', 'order', 'modify', 'cancel', 'dailyCandle']);
-      if (!ALLOWED.has(fn)) return reply(400, { ok: false, error: 'bad_fn' });
 
       try {
-        const api = await adapter(env);
-
         if (fn === 'order') {
           const [side, symbol, qty, price, opt] = args || [];
-          const reason = await orderChecks(env, side, symbol, qty, price, opt, api, opts);
-          if (reason) {
-            ledger.append('order_log', {
-              id: crypto.randomUUID(), draft_id: (opt && opt.draft_id) || null,
-              account_type: env === 'real' ? 'real' : 'paper', nation: (opt && opt.nation) || null,
-              symbol, side, order_type: 'limit', price, qty, amount: qty * price,
-              status: 'blocked', block_reason: reason,
-              broker_order_no: null, filled_at: null, created_at: new Date().toISOString(),
-            }, opts);
-            return reply(200, { ok: false, blocked: true, error: `관문 차단(${reason}) — 실전은 사용자 확인(confirmed)·화이트리스트·한도 필요` });
+          // reason 필수(지시5) — 없는 주문은 받지 않는다
+          if (!opt || typeof opt.reason !== 'string' || !opt.reason.trim()) {
+            return reply(200, { ok: false, blocked: true, error: '주문 거부: reason(사유) 필수 — 출사표 없는 출병 금지' });
           }
-          const r = await api.order(side, symbol, qty, price);
-          ledger.append('order_log', {
-            id: crypto.randomUUID(), draft_id: (opt && opt.draft_id) || null,
-            account_type: env === 'real' ? 'real' : 'paper', nation: (opt && opt.nation) || null,
-            symbol, side, order_type: 'limit', price, qty, amount: qty * price,
-            status: r.rt === '0' ? 'submitted' : 'rejected', block_reason: null,
-            broker_order_no: r.odno || null, filled_at: null, created_at: new Date().toISOString(),
-          }, opts);
-          return reply(200, { ok: r.rt === '0', result: r, error: r.rt === '0' ? undefined : r.msg });
+          const r = await gate.submit(asideDraft(env, side, symbol, qty, price, opt), gateOpts);
+          return reply(200, r.ok
+            ? { ok: true, result: r.result, fill: r.fill }
+            : { ok: false, blocked: r.blocked === true, error: r.error });
         }
-
-        // 조회·정정·취소: 어댑터 함수명 매핑(price → quote)
-        const map = { price: 'quote', balance: 'balance', fills: 'fills', modify: 'modify', cancel: 'cancel', dailyCandle: 'dailyCandle' };
-        const r = await api[map[fn]](...(args || []));
-        return reply(200, { ok: true, result: r });
+        if (fn === 'modify') {
+          const r = await gate.amend(env, args || [], gateOpts);
+          return reply(200, { ok: true, result: r });
+        }
+        if (fn === 'cancel') {
+          const r = await gate.revoke(env, args || [], gateOpts);
+          return reply(200, { ok: true, result: r });
+        }
+        if (['price', 'balance', 'fills', 'dailyCandle'].includes(fn)) {
+          const r = await gate.query(env, fn, args || [], gateOpts);
+          return reply(200, { ok: true, result: r });
+        }
+        return reply(400, { ok: false, error: 'bad_fn' });
       } catch (e) {
-        // 오류에 키·토큰이 섞이지 않도록 메시지만(어댑터 오류 메시지는 값 미포함 설계)
+        // 오류에 키·토큰이 섞이지 않도록 메시지만(게이트·어댑터 오류는 값 미포함 설계)
         return reply(200, { ok: false, error: String(e.message || '관문 내부 오류') });
       }
     });

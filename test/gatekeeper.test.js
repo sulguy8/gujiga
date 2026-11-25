@@ -49,7 +49,7 @@ function fakeKis() {
       const reply = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
       if (u.pathname === '/oauth2/tokenP') return reply({ access_token: 'FAKE-KIS-TOKEN-zz', access_token_token_expired: '2026-11-26 23:59:59' });
       if (u.pathname.endsWith('inquire-price')) return reply({ rt_cd: '0', msg1: '정상', output: { stck_prpr: '61500', prdy_ctrt: '1.2', stck_oprc: '61000', stck_hgpr: '61900', stck_lwpr: '60800', acml_vol: '100', prdy_vrss_vol_rate: '99' } });
-      if (u.pathname.endsWith('inquire-balance')) return reply({ rt_cd: '0', msg1: '정상', output1: [], output2: [{ dnca_tot_amt: '400000', prvs_rcdl_excc_amt: '400000', tot_evlu_amt: '1000000' }] });
+      if (u.pathname.endsWith('inquire-balance')) return reply({ rt_cd: '0', msg1: '정상', output1: [], output2: [{ dnca_tot_amt: '900000', prvs_rcdl_excc_amt: '900000', tot_evlu_amt: '1000000' }] });
       if (u.pathname.endsWith('order-cash')) return reply({ rt_cd: '0', msg1: '정상', output: { KRX_FWDG_ORD_ORGNO: '00950', ODNO: '0000117057' } });
       if (u.pathname.endsWith('order-rvsecncl')) return reply({ rt_cd: '0', msg1: '정상', output: { KRX_FWDG_ORD_ORGNO: '00950', ODNO: '0000117058' } });
       if (u.pathname.endsWith('inquire-daily-ccld')) return reply({ rt_cd: '0', msg1: '정상', output1: [] });
@@ -78,6 +78,9 @@ function writeGuard(dir, over) {
   }, over || {}), { dataDir: dir });
 }
 
+// 게이트 경유 주문의 성립 출사표용 공통 opt(5항목 — 출사표 없는 출병 금지)
+const DRAFT_OPT = { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: '관문 테스트' };
+
 async function boot(over) {
   const dir = makeTmpDir();
   const keysPath = setupKeys(dir);
@@ -88,6 +91,7 @@ async function boot(over) {
   const gate = await gatekeeper.start(Object.assign({
     dataDir: dir, keysPath, port: 0, tokenFile,
     baseUrls: { mock: mockSrv.url, real: realSrv.url }, gapMs: 30,
+    fillPollMs: 20, fillPollMax: 60,
   }, over || {}));
   const gateToken = fs.readFileSync(tokenFile, 'utf8').trim();
   return { dir, keysPath, mockSrv, realSrv, tokenFile, gate, gateToken };
@@ -180,9 +184,9 @@ test('시나리오8: 모의 시세·잔고 — 기존 kis_client와 동일 형�
 test('시나리오5: confirmed 없는 실전 주문은 관문이 차단(전송 0건·order_log 기록)', async () => {
   const s = await boot();
   try {
-    const r = await call(s.gate.port, s.gateToken, { env: 'real', fn: 'order', args: ['buy', '005930', 1, 61500, {}] });
+    const r = await call(s.gate.port, s.gateToken, { env: 'real', fn: 'order', args: ['buy', '005930', 1, 61500, { ...DRAFT_OPT }] });
     assert.equal(r.json.ok, false, '차단');
-    assert.match(r.json.error, /확인|confirmed/, '사유 명시');
+    assert.match(r.json.error, /확인|confirm/, '사유 명시');
     assert.equal(s.realSrv.received.length, 0, '실전 KIS 전송 0');
     const blocked = ledgerRows(s.dir, 'order_log').filter((x) => x.status === 'blocked');
     assert.equal(blocked.length, 1);
@@ -197,15 +201,15 @@ test('이중 잠금: STOP·한도 초과·화이트리스트 미등재·guard �
   const s = await boot();
   try {
     // 모의 한도 초과(50만 초과)
-    const lim = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 10, 61500, {}] });
+    const lim = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 10, 61500, { ...DRAFT_OPT }] });
     assert.equal(lim.json.ok, false, '615,000원 > 모의 50만 차단');
     // STOP 파일 → 전면 차단
     fs.writeFileSync(path.join(s.dir, 'STOP'), '');
-    const stop = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, {}] });
+    const stop = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { ...DRAFT_OPT }] });
     assert.equal(stop.json.ok, false, 'STOP 차단');
     fs.rmSync(path.join(s.dir, 'STOP'));
     // 실전 매수 화이트리스트 미등재(confirmed 있어도)
-    const wl = await call(s.gate.port, s.gateToken, { env: 'real', fn: 'order', args: ['buy', '005930', 1, 61500, { confirmed: true }] });
+    const wl = await call(s.gate.port, s.gateToken, { env: 'real', fn: 'order', args: ['buy', '005930', 1, 61500, { ...DRAFT_OPT, confirmed: true }] });
     assert.equal(wl.json.ok, false, '화이트리스트 차단');
     assert.equal(s.realSrv.received.length, 0, '실전 전송 여전히 0');
     // 차단 기록 누적 확인
@@ -224,7 +228,7 @@ test('이중 잠금: guard_config 없으면 모의 주문도 차단(안전 쪽 �
   const gate = await gatekeeper.start({ dataDir: dir, keysPath, port: 0, tokenFile, baseUrls: { mock: mockSrv.url, real: mockSrv.url }, gapMs: 30 });
   try {
     const tok = fs.readFileSync(tokenFile, 'utf8').trim();
-    const r = await call(gate.port, tok, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, {}] });
+    const r = await call(gate.port, tok, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: 'x' }] });
     assert.equal(r.json.ok, false, 'guard 부재 차단');
     assert.equal(mockSrv.received.length, 0);
   } finally {
@@ -236,7 +240,7 @@ test('이중 잠금: guard_config 없으면 모의 주문도 차단(안전 쪽 �
 test('모의 정상 주문: 한도 내 모의 매수는 접수되고 order_log에 남는다', async () => {
   const s = await boot();
   try {
-    const r = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 3, 61500, { reason: '테스트' }] });
+    const r = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 3, 61500, { ...DRAFT_OPT, reason: '테스트' }] });
     assert.equal(r.json.ok, true);
     assert.equal(r.json.result.odno, '0000117057');
     const subs = ledgerRows(s.dir, 'order_log').filter((x) => x.status === 'submitted');
@@ -254,7 +258,7 @@ test('시나리오7: 응답·장부 전수에 키·KIS 토큰 값 미노출', as
     const responses = [];
     responses.push(await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'price', args: ['005930'] }));
     responses.push(await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'balance', args: [] }));
-    responses.push(await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 3, 61500, {}] }));
+    responses.push(await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 3, 61500, { ...DRAFT_OPT }] }));
     const corpus = JSON.stringify(responses)
       + JSON.stringify(ledgerRows(s.dir, 'order_log'))
       + JSON.stringify(ledgerRows(s.dir, 'token_log'))
@@ -348,7 +352,7 @@ test('클라이언트: make("mock") → price/balance가 기존 형태로 동작
     const b = await api.balance();
     assert.equal(b.total, 1000000);
     // 모의 주문 → 접수 + Aside 쪽 order_log.jsonl 기록(기존 안전장치·로그 유지)
-    const o = await api.order('buy', '005930', 3, 61500, { reason: 'tst' });
+    const o = await api.order('buy', '005930', 3, 61500, { reason: 'tst', stop_price: 59000, target_price: 66000, deadline: '2026-12-10' });
     assert.equal(o.odno, '0000117057');
     const log = fs.readFileSync(path.join(root, 'trading', 'order_log.jsonl'), 'utf8').trim().split('\n');
     assert.equal(log.length, 1, '클라이언트 order_log 기록 유지');

@@ -67,10 +67,13 @@
       roundTick,
       async balance() { return gate(env, 'balance', []); },
       async price(code) { return gate(env, 'price', [code]); },
-      async order(side, code, qty, price, { confirmed = false, reason = '' } = {}) {
+      // opt: { confirmed, reason(필수), stop_price, target_price, deadline, nation }
+      //  — 관문이 출사표(5항목)로 변환하므로 성벽·목표·기한을 함께 넘겨라(출사표 없는 출병 금지).
+      async order(side, code, qty, price, opt = {}) {
+        const { confirmed = false, reason = '' } = opt;
         await guardCheck(side, code, qty, price, confirmed); // 1차 잠금(기존 유지)
-        // 2차 잠금은 관문이 gujiga guard_config 기준으로 별도 수행(이중 잠금)
-        const res = await gate(env, 'order', [side, code, qty, price, { confirmed, reason }]);
+        // 2차 잠금은 관문의 단일 게이트(7단계)가 수행(검사 로직 단일화)
+        const res = await gate(env, 'order', [side, code, qty, price, { ...opt, confirmed, reason }]);
         await log({ type: 'order', side, code, qty, price, reason, rt: res.rt, msg: res.msg, orgno: res.orgno, odno: res.odno });
         return res;
       },

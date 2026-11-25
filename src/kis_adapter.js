@@ -81,12 +81,18 @@ async function make(env, opts) {
     last = Date.now();
   }
 
-  // 토큰: 캐시 유효(만료 30분 전) → 재사용. 아니면 1회 발급, 실패 즉시 보고.
+  // 토큰: 메모리 캐시(ARC-005 — 복호화 값은 메모리에만) → 디스크 암호화 캐시 → 발급.
+  // 디스크 캐시 복호화(DPAPI)는 호출마다가 아니라 1회만 수행한다.
+  let memTok = null; // { token, expMs }
   async function token() {
+    if (memTok && memTok.expMs > Date.now() + TOKEN_MARGIN_MS) return memTok.token;
     const cached = secret.loadToken(tokenName, opts);
     if (cached && cached.token && cached.expires) {
       const exp = new Date(cached.expires.replace(' ', 'T') + '+09:00');
-      if (exp.getTime() > Date.now() + TOKEN_MARGIN_MS) return cached.token;
+      if (exp.getTime() > Date.now() + TOKEN_MARGIN_MS) {
+        memTok = { token: cached.token, expMs: exp.getTime() };
+        return cached.token;
+      }
     }
     await pace();
     const r = await fetch(base + '/oauth2/tokenP', {
@@ -100,6 +106,7 @@ async function make(env, opts) {
       throw new Error(`토큰 발급 실패(${j.error_code || r.status}) — 재시도하지 않음`);
     }
     secret.saveToken(tokenName, { token: j.access_token, expires: j.access_token_token_expired }, opts);
+    memTok = { token: j.access_token, expMs: new Date(String(j.access_token_token_expired).replace(' ', 'T') + '+09:00').getTime() };
     // 발급 기록(알림톡 대조용) — 토큰 값은 기록하지 않는다
     ledger.append('token_log', {
       id: crypto.randomUUID(), env,
