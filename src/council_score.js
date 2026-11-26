@@ -64,6 +64,11 @@ async function scoreVerdicts(today, opts) {
       out.push({ type: 'score', verdict_id: r.id, score_result: 'excluded', rel_return: null, scored_at: today, reason: '관망 — 방향 판정 제외' });
       continue;
     }
+    if (!r.ticker) {
+      // 복합 안건(종목 없음 — 이관 2차 회의 등)은 종가 조회 자체가 무의미 — 즉시 제외(무효 조회 반복 방지, 군사 지적)
+      out.push({ type: 'score', verdict_id: r.id, score_result: 'excluded', rel_return: null, scored_at: today, reason: '복합 안건 — 종목 없음, 채점 불가' });
+      continue;
+    }
     const base = await officialClose(opts.closes, r.ticker, r.date);
     const after = await officialClose(opts.closes, r.ticker, target);
     const ibase = await officialClose(opts.closes, KODEX, r.date);

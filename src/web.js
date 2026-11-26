@@ -500,7 +500,7 @@ function renderCouncil(opts, agendaFilter, dateFilter) {
     const agendas = [...byAgenda.entries()].sort((a, b) => String(b[1][0].date).localeCompare(String(a[1][0].date)));
     for (const [agendaId, items] of agendas) {
       const first = items[0];
-      const syn = items.find((r) => r.advisor === '제갈량' && r.source === 'synthesis' && !r.migrated);
+      const syn = items.find((r) => r.advisor === '제갈량' && r.source === 'synthesis');
       const gahu = items.find((r) => r.advisor === '가후');
       const opinions = items.filter((r) => r.advisor !== '제갈량');
       const title = first.ticker
@@ -522,7 +522,7 @@ function renderCouncil(opts, agendaFilter, dateFilter) {
       H.push('</table>');
       const aSyn = asideSynth.get(agendaId);
       if (syn) {
-        H.push(`<p><b>제갈량 종합: ${esc(syn.stance)}</b> (확신 ${esc(String(syn.confidence))}) — ${esc(syn.rationale)}` +
+        H.push(`<p><b>제갈량 종합${syn.migrated ? '(시범 기록)' : ''}: ${esc(syn.stance)}</b> (확신 ${esc(String(syn.confidence))}) — ${esc(syn.rationale)}` +
           (syn.disagreement != null ? ` · 불일치율 ${esc(String(syn.disagreement))}%` : '') + '</p>');
       } else if (aSyn) {
         H.push(`<p><b>제갈량 종합(시범 기록)</b>: ${esc(aSyn.tally || '')} → ${esc(aSyn.pick || '')}</p>`);
@@ -536,7 +536,10 @@ function renderCouncil(opts, agendaFilter, dateFilter) {
       if (aSyn && aSyn.decision_pick) {
         H.push(`<p><b>군주 결정</b>: ${esc(aSyn.decision_pick)}${aSyn.decided_at ? ` <span class="muted">(${esc(String(aSyn.decided_at))})</span>` : ''}</p>`);
       }
-      if (gahu) H.push(`<p><b>가후(반대 전담 — 항상 표시)</b>: ${esc(gahu.raw_view || gahu.stance)} · ${esc(gahu.rationale)}</p>`);
+      if (gahu) {
+        const gahuAm = amends.get(`${agendaId}|가후`);
+        H.push(`<p><b>가후(반대 전담 — 항상 표시)</b>: ${esc(gahu.raw_view || (gahuAm && gahuAm.raw_view) || gahu.stance)} · ${esc((gahuAm && gahuAm.rationale) || gahu.rationale)}</p>`);
+      }
       H.push('</section>');
     }
   }

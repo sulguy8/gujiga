@@ -131,9 +131,14 @@ function migrateCouncilReports(reportsDir, opts) {
     }
     const date = obj.date || f.replace(/\.json$/, '').slice(0, 10);
 
-    // 평평한 항목(형식 A)과 중첩 항목(형식 B)을 분리
-    const flat = obj.council.filter((c) => c && c.advisor);
-    const nested = obj.council.filter((c) => c && Array.isArray(c.opinions));
+    // 평평한 항목(형식 A)과 중첩 항목(형식 B)을 배타적으로 분리 — 어느 쪽도 아니면 보류(조용히 버리지 않는다)
+    const flat = [];
+    const nested = [];
+    for (const c of obj.council) {
+      if (c && Array.isArray(c.opinions)) nested.push(c);
+      else if (c && c.advisor) flat.push(c);
+      else out.deferred.push({ file: f, reason: `알 수 없는 council 항목 형식: ${JSON.stringify(c).slice(0, 60)}` });
+    }
 
     // A: topic에서 종목코드 — 같은 topic끼리 한 안건
     for (const c of flat) {
@@ -148,10 +153,13 @@ function migrateCouncilReports(reportsDir, opts) {
       }, [c]);
     }
 
-    // B: 안건 단위 — agenda_id는 날짜+시각(종목코드가 없을 수 있음)
+    // B: 안건 단위 — agenda_id는 날짜+시각(종목코드가 없을 수 있음). 같은 시각 중복은 -2, -3…
+    const usedIds = new Set();
     for (const n of nested) {
       const hhmm = (String(n.time || '').match(/(\d{2}):(\d{2})/) || [null, '00', '00']).slice(1).join('');
-      const agendaId = `ASIDE-${date}-${hhmm}`;
+      let agendaId = `ASIDE-${date}-${hhmm}`;
+      for (let suffix = 2; usedIds.has(agendaId); suffix++) agendaId = `ASIDE-${date}-${hhmm}-${suffix}`;
+      usedIds.add(agendaId);
       const ticker = (String(n.agenda || '').match(/\d{6}/) || [null])[0];
       migrateAgenda(f, date, agendaId, {
         ticker, agendaType: 'entry', label: n.agenda || null,

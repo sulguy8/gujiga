@@ -7,18 +7,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const DEFAULT_PATH = path.join(__dirname, '..', 'config', 'symbols.json');
-let _cache = null;
+const _cache = new Map(); // 경로별 캐시 — 사전 파일을 고치면 프로세스 재기동 후 반영(장수명 데몬 주의)
 
 function dict(opts) {
   if (opts && opts.symbolsDict) return opts.symbolsDict;
-  if (_cache) return _cache;
+  const p = (opts && opts.symbolsPath) || DEFAULT_PATH;
+  if (_cache.has(p)) return _cache.get(p);
+  let raw;
   try {
-    const raw = JSON.parse(fs.readFileSync((opts && opts.symbolsPath) || DEFAULT_PATH, 'utf8'));
-    _cache = raw;
+    raw = JSON.parse(fs.readFileSync(p, 'utf8'));
   } catch (e) {
-    _cache = {};
+    raw = {};
   }
-  return _cache;
+  _cache.set(p, raw);
+  return raw;
 }
 
 function nameOf(symbol, opts) {
