@@ -34,6 +34,7 @@ const notify = require('./notify');
 const benchmark = require('./benchmark');
 const retreat = require('./retreat');
 const backup = require('./backup');
+const nation = require('./nation');
 
 const JOBS = [
   { name: 'snapshot_0830', time: '08:30', catchup: true },
@@ -315,7 +316,9 @@ async function watchRetreats(date, opts) {
   const positions = state.read('positions', opts) || [];
   let changed = false;
   for (const p of positions) {
-    if (p.status !== 'open') continue;
+    // fills는 모의 체결조회 — 실전 보유를 모의 매도로 닫는 오매칭 방지(군사 지적 2026-11-26).
+    // 실전 회군 자동 감지는 미구현(한계 — TSK-024 카드 명기), 실전 매도는 수동 반영.
+    if (p.status !== 'open' || p.account_type !== 'paper') continue;
     const fill = fillsRows.find((f) => f.symbol && f.symbol === p.symbol && f.side === 'sell' && f.remain === 0 && f.filled >= p.qty);
     if (!fill) continue;
     p.status = 'closed';
@@ -334,6 +337,95 @@ async function watchRetreats(date, opts) {
     }, opts);
   }
   if (changed) state.write('positions', positions, opts);
+}
+
+// --- 매수 체결 자동 반영(출병 감지 — 군사 지적 2026-11-26) ---
+// 예약(매복) 매수가 나중에 체결되면 order_log·positions 어디에도 기록되지 않는 사각을 메운다.
+// 멱등 키 = (계좌, 주문번호) — KIS 주문번호는 계좌별 일련번호라 모의·실전이 겹칠 수 있다.
+// 전량 체결만 반영, 부분 체결은 note로 보류. submitted 행이 없는 체결(관문 밖 — 비정상)은 note만.
+// 한계: pollFill이 partial로 기록한 주문의 전량 전환은 금액 보정 없이 생략(지정가라 과대 차감 쪽 — 보수적).
+async function watchSorties(date, opts) {
+  const dataDir = paths.resolveDataDir(opts);
+  const sources = [];
+  if (opts.providers && opts.providers.fills) sources.push(['paper', opts.providers.fills]);
+  if (opts.providers && opts.providers.fillsReal) sources.push(['real', opts.providers.fillsReal]);
+  let mockChanged = false;
+
+  for (const [acct, provider] of sources) {
+    let fillsRows;
+    try {
+      fillsRows = provider(date.replace(/-/g, ''));
+    } catch (e) {
+      continue; // 체결조회 실패 — 이 회차 감지 생략(다음 틱 재시도)
+    }
+    if (!Array.isArray(fillsRows) || fillsRows.length === 0) continue;
+
+    const orders = readLog(dataDir, 'order_log');
+    const positions = state.read('positions', opts) || [];
+    const noted = new Set(readLog(dataDir, 'shadow_job_log')
+      .filter((r) => r.job === 'sortie_watch' && r.status === 'note')
+      .map((r) => r.skipped_odno));
+    let posChanged = false;
+    const acctType = acct === 'real' ? 'real' : 'paper';
+    const seen = new Set(); // 같은 틱 fills에 동일 주문번호 중복 행 방어(원장 이중 기재 방지)
+
+    for (const f of fillsRows) {
+      if (f.side !== 'buy' || !f.odno || !(f.filled > 0)) continue;
+      if (seen.has(f.odno)) continue;
+      seen.add(f.odno);
+      if (f.remain > 0) {
+        if (!noted.has(f.odno)) {
+          logJob('note', 'sortie_watch', date, opts, { skipped_odno: f.odno, reason: 'partial — 부분 체결 보류(전량 체결 시 반영)' });
+          noted.add(f.odno);
+        }
+        continue;
+      }
+      const already = orders.find((r) => r.account_type === acctType && r.broker_order_no === f.odno && r.side === 'buy' && ['filled', 'partial'].includes(r.status));
+      const sub = orders.find((r) => r.account_type === acctType && r.broker_order_no === f.odno && r.side === 'buy' && r.status === 'submitted');
+      const base = already || sub;
+      if (!base) {
+        if (!noted.has(f.odno)) {
+          logJob('note', 'sortie_watch', date, opts, { skipped_odno: f.odno, reason: 'no_submitted — 관문 기록 없는 매수 체결, 반영 생략(수동 확인 필요)' });
+          noted.add(f.odno);
+        }
+        continue;
+      }
+      if (!already) {
+        ledger.append('order_log', {
+          id: crypto.randomUUID(), account_type: base.account_type, nation: base.nation || null,
+          symbol: base.symbol, side: 'buy', order_type: base.order_type || 'limit',
+          price: f.avgFill != null ? f.avgFill : base.price, qty: f.filled,
+          amount: (f.avgFill != null ? f.avgFill : base.price) * f.filled,
+          stop_price: base.stop_price != null ? base.stop_price : null,
+          target_price: base.target_price != null ? base.target_price : null,
+          deadline: base.deadline || null,
+          hypothesis_ids: base.hypothesis_ids || null,
+          status: 'filled', block_reason: null, broker_order_no: f.odno,
+          filled_at: new Date().toISOString(), created_at: new Date().toISOString(),
+          source: 'sortie_watch',
+        }, opts);
+        if (acct === 'paper') mockChanged = true;
+      }
+      if (!positions.some((p) => p.account_type === acctType && p.broker_order_no === f.odno)) {
+        positions.push({
+          id: crypto.randomUUID(), account_type: acctType,
+          nation: base.nation || null, symbol: f.symbol || base.symbol,
+          qty: f.filled, avg_price: f.avgFill != null ? f.avgFill : base.price,
+          stop_price: base.stop_price != null ? base.stop_price : null,
+          target_price: base.target_price != null ? base.target_price : null,
+          deadline: base.deadline || null, hypothesis_ids: base.hypothesis_ids || [],
+          status: 'open', opened_at: new Date().toISOString(), broker_order_no: f.odno,
+        });
+        posChanged = true;
+        if (acct === 'paper') mockChanged = true;
+      }
+    }
+    if (posChanged) state.write('positions', positions, opts);
+  }
+  // 모의 반영이 있었으면 세력 장부 스냅샷 재계산(실전은 세력전 밖)
+  if (mockChanged) {
+    try { nation.saveLedger(opts); } catch (e) { /* 스냅샷 실패는 치명 아님 — 재계산이 정본 */ }
+  }
 }
 
 // 기한 만료(미매도) — 15:05 점검 회차에서 같은 경로. 기한 이행 실패로 기록.
@@ -430,8 +522,9 @@ async function runOnce(opts) {
     ran.push('weekly_monday');
   }
 
-  // 회군 감지: 매도 체결로 포지션 0 → closeTrade(그림자 기록만, 멱등 키)
+  // 출병·회군 감지(체결조회): 매수 체결 → positions 반영이 먼저, 그다음 매도 회군
   if (minutes >= openMin && minutes <= closeMin + 30) {
+    await watchSorties(date, opts);
     await watchRetreats(date, opts);
   }
 
@@ -494,4 +587,4 @@ async function runOnce(opts) {
   return { trading: true, date, ran, missed };
 }
 
-module.exports = { runOnce, updateSoxWindow, compareWithAside, JOBS };
+module.exports = { runOnce, updateSoxWindow, compareWithAside, watchSorties, JOBS };
