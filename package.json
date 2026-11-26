@@ -7,6 +7,7 @@
   "scripts": {
     "test": "node --test",
     "start": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-start.ps1",
-    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-stop.ps1"
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-stop.ps1",
+    "status": "powershell -NoProfile -ExecutionPolicy Bypass -File bin/gujiga-status.ps1"
   }
 }
