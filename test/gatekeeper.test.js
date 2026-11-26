@@ -420,3 +420,22 @@ test('스케줄러 스크립트: 등록/해제 파일이 존재하고 로그온 
   assert.match(reg, /군주가 직접/, '실행 주체 안내');
   assert.match(unreg, /Delete|Unregister/i);
 });
+
+// ===== 지령 014: /call order 차단 응답에 사유 코드·note 포함 + 별칭 정규화 =====
+test('지령014: 차단 응답 msg에 reason·note — 별칭 FIX-V는 통과', async () => {
+  const s = await boot();
+  try {
+    const base = { stop_price: 59000, target_price: 66000, deadline: '2026-12-10', reason: '별칭 테스트', nation: 'chok' };
+    // 별칭('FIX-V' → 'HYP-FIX-V') 통과
+    const ok = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { ...base, hypothesis_ids: ['FIX-V'] }] });
+    assert.equal(ok.json.ok, true, '별칭 정규화 통과');
+    // 없는 ID → blocked + reason·note가 응답에 함께
+    const bad = await call(s.gate.port, s.gateToken, { env: 'mock', fn: 'order', args: ['buy', '005930', 1, 61500, { ...base, hypothesis_ids: ['B99'] }] });
+    assert.equal(bad.json.ok, false);
+    assert.equal(bad.json.blocked, true);
+    assert.equal(bad.json.reason, 'no_rationale', '사유 코드');
+    assert.match(String(bad.json.error) + String(bad.json.note || ''), /장부에 없는 가설: B99/, 'note 포함');
+  } finally {
+    await shutdown(s);
+  }
+});

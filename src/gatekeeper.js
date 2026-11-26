@@ -445,9 +445,15 @@ function start(opts) {
             return reply(200, { ok: false, blocked: true, error: '주문 거부: reason(사유) 필수 — 출사표 없는 출병 금지' });
           }
           const r = await gate.submit(asideDraft(env, side, symbol, qty, price, opt), gateOpts);
+          // 차단 응답에 사유 코드·상세 note를 함께 담는다(지령 014) — Aside가 원인을 바로 알게.
+          // detail은 ids·수치·안내문뿐이라 비밀 값 없음(gate 설계).
+          const note = r.detail && r.detail.note ? r.detail.note : null;
           return reply(200, r.ok
             ? { ok: true, result: r.result, fill: r.fill }
-            : { ok: false, blocked: r.blocked === true, error: r.error });
+            : {
+              ok: false, blocked: r.blocked === true, reason: r.reason || null, note,
+              error: note ? `${r.error} — ${note}` : r.error,
+            });
         }
         if (fn === 'modify') {
           const r = await gate.amend(env, args || [], gateOpts);
