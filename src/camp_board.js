@@ -53,10 +53,20 @@ function rankCard(opts) {
       eligible = sortie >= 5 && review >= 4 && violations.length === 0;
     }
 
+    // 다음 벼슬 라벨(지령 016 — "다음 벼슬까지". 승상이면 없음)
+    let nextLabel = null;
+    try {
+      const idx = ranks.RANK_ORDER.indexOf(lim.rank);
+      if (idx >= 0 && idx < ranks.RANK_ORDER.length - 1) {
+        nextLabel = ranks.rankLimits(ranks.RANK_ORDER[idx + 1], opts).label;
+      }
+    } catch (e) { /* 표 결손 — 생략 */ }
+
     return {
       ok: true,
       rank: lim.rank,
       label: lim.label || lim.rank,
+      nextLabel,
       perStockLimitWon: lim.perStockLimitWon,
       concurrentMax: lim.concurrentMax,
       sortie, clean, review,

@@ -98,7 +98,7 @@ function render(data, opts2, extras) {
   // 1) 머리: 날짜·벼슬·다음 벼슬까지
   H.push('<div>');
   H.push(`<div class="h1">${terms.TERMS.home_title}</div>`);
-  H.push(`<div class="m">${esc(data.today)}${rk.ok ? ` · ${esc(terms.TERMS.rank_progress(rk.label, rk.sortie))} · 한 성 최대 ${won(rk.perStockLimitWon)}원 · 동시 ${rk.concurrentMax == null ? '재량' : rk.concurrentMax + '성'}` : ''}${rk.ok && rk.eligible ? '<span class="badge">승진 가능 — 확정은 군주 수락</span>' : ''}</div>`);
+  H.push(`<div class="m">${esc(data.today)}${rk.ok ? ` · ${esc(terms.TERMS.rank_progress(rk.label, rk.sortie, rk.nextLabel))} · 한 성 최대 ${won(rk.perStockLimitWon)}원 · 동시 ${rk.concurrentMax == null ? '재량' : rk.concurrentMax + '성'}` : ''}${rk.ok && rk.eligible ? '<span class="badge">승진 가능 — 확정은 군주 수락</span>' : ''}</div>`);
   H.push('</div>');
 
   // 2) 상태 칩: 천하 정세·봉화·코스피·관문
@@ -155,10 +155,18 @@ function render(data, opts2, extras) {
           `<span class="mk" style="left:100%;transform:translateX(-100%)">${terms.TERMS.flag} ${won(r.targetPrice)}</span>` +
           (r.price != null ? `<div class="dot" style="left:${pct(r.price)}%"></div>` : '') + '</div>');
       }
-      const dday = r.deadline ? Math.ceil((new Date(`${r.deadline}T00:00:00`) - new Date(`${data.today}T00:00:00`)) / 86400000) : null;
-      H.push(`<div class="line">${terms.TERMS.wall}까지 ${r.stopDistance != null ? esc(String(-r.stopDistance)) + '% 여유' : `${terms.TERMS.no_quotes}`}` +
+      let dday = r.deadline ? Math.ceil((new Date(`${r.deadline}T00:00:00`) - new Date(`${data.today}T00:00:00`)) / 86400000) : null;
+      if (dday != null && Number.isNaN(dday)) dday = null;
+      const ddayText = dday == null ? '' : dday >= 0 ? ` (D-${dday})` : ` (기한 경과 ${-dday}일)`;
+      // 성벽까지: 시안 규약 음수=여유. 뚫림(현재가 < 성벽)은 위험 표기로 분기(군사 지적 — 여유로 오독 방지)
+      const wallText = r.stopDistance == null
+        ? `${terms.TERMS.no_quotes}${cs.quoteAt ? `(마지막 ${esc(String(cs.quoteAt))})` : ''}`
+        : r.stopDistance >= 0
+          ? `-${esc(String(r.stopDistance))}% 여유`
+          : `<span class="neg"><b>뚫림 ${esc(String(-r.stopDistance))}% — 읍참마속(손절 규칙) 판정 필요</b></span>`;
+      H.push(`<div class="line">${terms.TERMS.wall}까지 ${wallText}` +
         `${r.flagDistance != null ? ` · ${terms.TERMS.flag}까지 ${r.flagDistance > 0 ? '+' : ''}${esc(String(r.flagDistance))}%` : ''}` +
-        `${r.deadline ? ` · 퇴각 기한 ${esc(r.deadline)}${dday != null ? ` (D-${dday})` : ''}` : ''}</div>`);
+        `${r.deadline ? ` · 퇴각 기한 ${esc(r.deadline)}${ddayText}` : ''}</div>`);
       H.push('</div>');
     }
     H.push(cs.quoteAt
@@ -190,6 +198,8 @@ function render(data, opts2, extras) {
   const fc = data.forces;
   H.push(`<div class="sec"><div class="st"><span>${terms.TERMS.loot_title}</span><span>${terms.TERMS.benchmark} 대비</span></div><div class="rows">`);
   if (cp.ok) {
+    const allZero = ['real', 'paper'].every((k) => cp[k].captives === 0 && cp[k].lossOutstanding === 0 && cp[k].meritTotal === 0);
+    if (allZero) H.push(`<div class="row"><span class="muted">${terms.TERMS.no_judged} — 첫 회군(매도)부터 쌓인다</span></div>`);
     for (const [key, label] of [['real', '실전'], ['paper', '모의']]) {
       const s = cp[key];
       H.push(`<div class="row"><span>${label} · 포로 ${s.captives}명 · 구출까지 ${won(s.lossOutstanding)}원</span><span class="num ${s.meritTotal > 0 ? 'pos' : s.meritTotal < 0 ? 'neg' : ''}">누적 전공 ${won(s.meritTotal)}원</span></div>`);
@@ -377,8 +387,10 @@ function renderMerit(opts) {
   }
   H.push('</section>');
 
-  // 거래 목록(손익 열과 별도로 분면 표기)
-  H.push('<section><h3>거래별</h3><table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
+  // 거래 목록(손익 열과 별도로 분면 표기). 판정 0건이면 '아직 전공 없음'(지령 016 용어표)
+  H.push('<section><h3>거래별</h3>');
+  if (trades.length === 0) H.push(`<p class="muted">${terms.TERMS.no_judged} — 회군(매도)·기한 도래부터 쌓인다</p>`);
+  H.push('<table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
   for (const t of trades) {
     const q = merit.quadrantOf(Object.assign({}, t, { compliant: merit.isCompliant(t) }));
     const cls = q === 'honorable_defeat' ? 'q-honor' : q === 'true_failure' ? 'q-fail' : `q-${q}`;

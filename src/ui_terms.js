@@ -6,7 +6,7 @@
 
 const TERMS = {
   home_title: '주군의 군영',
-  rank_progress: (label, n) => `벼슬 ${label} · 태수까지 출병 ${n}/5`,
+  rank_progress: (label, n, nextLabel) => `벼슬 ${label}${nextLabel ? ` · ${nextLabel}까지 출병 ${n}/5` : ''}`,
   nations_title: '삼국 정립',
   weekly_merit: '이번 주 논공',
   castles_title: '점령 중인 성',
@@ -26,7 +26,7 @@ const TERMS = {
   no_snapshot: '척후가 아직 돌아오지 않았습니다(08:30 도착 예정)',
   no_quotes: '봉화가 끊겼습니다',
   no_judged: '아직 전공 없음',
-  gate_open: '관문 열림',
+  gate_open: '관문 열림(응답만 — 정상 확인은 모의 잔고 조회)', // ping 200 = 생존만(군령 10)
   gate_closed: '관문 닫힘',
   reference_note: '참고용, 최종 결정은 군주',
 };

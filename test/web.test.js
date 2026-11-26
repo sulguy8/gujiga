@@ -371,3 +371,38 @@ test('설정: config/web.json 기본 포트가 62900이고 예약 포트와 겹�
   assert.equal(cfg.port, 62900);
   assert.ok(![62838, 8079, 8080].includes(cfg.port), 'OCTET·8079·8080과 충돌 없음');
 });
+
+// ===== 지령 016 개편 로직: 성벽 뚫림 표기·빈 전공·게이지 클램프 =====
+test('지령016: 성벽 뚫림(현재가<성벽) — 여유 아닌 위험 표기·게이지 점 0% 클램프', async () => {
+  const dir = makeTmpDir();
+  try {
+    seed(dir, {
+      positions: [
+        { id: 'p1', account_type: 'paper', nation: 'wi', symbol: '458870', qty: 18, avg_price: 13250, stop_price: 12500, target_price: 14570, deadline: '2026-12-10', status: 'open' },
+      ],
+    });
+    fs.mkdirSync(path.join(dir, 'market_cache'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'market_cache', 'quotes_latest.json'),
+      JSON.stringify({ updated_at: '2026-11-25T15:30:00+09:00', quotes: { '458870': 12000 } }), 'utf8'); // 성벽 아래
+    await withServer(dir, {}, async (srv) => {
+      const { body } = await request(srv.port);
+      assert.match(body, /뚫림/, '여유로 오독 금지');
+      assert.ok(!/\+4% 여유|4% 여유/.test(body), '뚫림을 여유로 표기하지 않음');
+      assert.match(body, /left:0%/, '게이지 점 0% 클램프');
+      assert.match(body, /읍참마속/, '손절 규칙 판정 안내');
+    });
+  } finally { rm(dir); }
+});
+
+test('지령016: 빈 전공 — 아직 전공 없음 문구·용어 반영', async () => {
+  const dir = makeTmpDir();
+  try {
+    seed(dir, {});
+    await withServer(dir, {}, async (srv) => {
+      const { body } = await request(srv.port);
+      assert.match(body, /아직 전공 없음/, '빈 상태 용어');
+      assert.match(body, /주군의 군영/);
+      assert.match(body, /천하 대세/, '기준선 용어');
+    });
+  } finally { rm(dir); }
+});
