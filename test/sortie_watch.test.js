@@ -151,3 +151,44 @@ test('시나리오7: 매도 체결 행은 무시', async () => {
     assert.equal(state.read('positions', { dataDir: dir }), null);
   } finally { rm(dir); }
 });
+
+// ===== ⑧ 경계: 같은 종목 다른 주문번호 2건 → positions 2행 / 같은 틱 중복 행 방어 =====
+test('시나리오8: 같은 종목 주문 2건은 각각 반영·같은 틱 중복 fills 행은 1회만', async () => {
+  const dir = makeTmpDir();
+  try {
+    seedSubmitted(dir, { broker_order_no: 'A1', qty: 5, amount: 66250 });
+    seedSubmitted(dir, { broker_order_no: 'A2', qty: 6, amount: 79500 });
+    // A1은 같은 틱에 중복 2행으로 도착(이중 기재 방어 확인)
+    const f1 = fill({ odno: 'A1', filled: 5 });
+    await shadow.watchSorties('2026-11-26', opts(dir, [f1, { ...f1 }, fill({ odno: 'A2', filled: 6 })]));
+    const filled = rows(dir, 'order_log').filter((r) => r.status === 'filled');
+    assert.equal(filled.length, 2, '주문별 filled 1행씩');
+    assert.equal((state.read('positions', { dataDir: dir }) || []).length, 2, 'positions 2행');
+  } finally { rm(dir); }
+});
+
+// ===== ⑨ 멱등 키 (계좌, 주문번호): 모의·실전 주문번호 충돌 =====
+test('시나리오9: 같은 주문번호의 모의·실전 — 교차 오귀속 없음', async () => {
+  const dir = makeTmpDir();
+  try {
+    seedSubmitted(dir, { broker_order_no: 'X7' }); // 모의(wi)만 submitted
+    // 실전 체결조회에 같은 번호 X7 — 실전 submitted가 없으므로 반영 생략(모의 행을 base로 잡으면 안 됨)
+    await shadow.watchSorties('2026-11-26', opts(dir, null, [fill({ odno: 'X7' })]));
+    assert.equal(rows(dir, 'order_log').filter((r) => r.status === 'filled').length, 0, '실전 반영 0');
+    assert.equal(state.read('positions', { dataDir: dir }), null, '모의 submitted 오귀속 없음');
+    // 모의 체결이 오면 정상 반영되고, 실전 note가 모의 반영을 막지 않는다
+    await shadow.watchSorties('2026-11-26', opts(dir, [fill({ odno: 'X7' })]));
+    const pos = state.read('positions', { dataDir: dir }) || [];
+    assert.equal(pos.length, 1);
+    assert.equal(pos[0].account_type, 'paper');
+  } finally { rm(dir); }
+});
+
+// ===== ⑩ 주문 경로 0 — watchSorties 소스에 주문·전송 호출이 없다(TST-023 명시 단언) =====
+test('시나리오10: shadow 소스에 주문류 호출 0(정규식 — TST-017 1a와 동일 기준)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'shadow.js'), 'utf8');
+  assert.ok(!/\.(order|submit|amend|revoke|modify|cancel)\s*\(/.test(src), '주문류 호출 0');
+  for (const mod of ['./gate', './kis_adapter', './gatekeeper']) {
+    assert.ok(!src.includes(`require('${mod}')`), `주문 경로 모듈 금지: ${mod}`);
+  }
+});

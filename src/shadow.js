@@ -316,7 +316,9 @@ async function watchRetreats(date, opts) {
   const positions = state.read('positions', opts) || [];
   let changed = false;
   for (const p of positions) {
-    if (p.status !== 'open') continue;
+    // fills는 모의 체결조회 — 실전 보유를 모의 매도로 닫는 오매칭 방지(군사 지적 2026-11-26).
+    // 실전 회군 자동 감지는 미구현(한계 — TSK-024 카드 명기), 실전 매도는 수동 반영.
+    if (p.status !== 'open' || p.account_type !== 'paper') continue;
     const fill = fillsRows.find((f) => f.symbol && f.symbol === p.symbol && f.side === 'sell' && f.remain === 0 && f.filled >= p.qty);
     if (!fill) continue;
     p.status = 'closed';
@@ -339,8 +341,9 @@ async function watchRetreats(date, opts) {
 
 // --- 매수 체결 자동 반영(출병 감지 — 군사 지적 2026-11-26) ---
 // 예약(매복) 매수가 나중에 체결되면 order_log·positions 어디에도 기록되지 않는 사각을 메운다.
-// 멱등 키 = 주문번호(broker_order_no). 전량 체결만 반영, 부분 체결은 note로 보류.
-// submitted 행이 없는 체결(관문 밖 주문 — 비정상)은 반영하지 않고 note만 남긴다.
+// 멱등 키 = (계좌, 주문번호) — KIS 주문번호는 계좌별 일련번호라 모의·실전이 겹칠 수 있다.
+// 전량 체결만 반영, 부분 체결은 note로 보류. submitted 행이 없는 체결(관문 밖 — 비정상)은 note만.
+// 한계: pollFill이 partial로 기록한 주문의 전량 전환은 금액 보정 없이 생략(지정가라 과대 차감 쪽 — 보수적).
 async function watchSorties(date, opts) {
   const dataDir = paths.resolveDataDir(opts);
   const sources = [];
@@ -363,9 +366,13 @@ async function watchSorties(date, opts) {
       .filter((r) => r.job === 'sortie_watch' && r.status === 'note')
       .map((r) => r.skipped_odno));
     let posChanged = false;
+    const acctType = acct === 'real' ? 'real' : 'paper';
+    const seen = new Set(); // 같은 틱 fills에 동일 주문번호 중복 행 방어(원장 이중 기재 방지)
 
     for (const f of fillsRows) {
       if (f.side !== 'buy' || !f.odno || !(f.filled > 0)) continue;
+      if (seen.has(f.odno)) continue;
+      seen.add(f.odno);
       if (f.remain > 0) {
         if (!noted.has(f.odno)) {
           logJob('note', 'sortie_watch', date, opts, { skipped_odno: f.odno, reason: 'partial — 부분 체결 보류(전량 체결 시 반영)' });
@@ -373,8 +380,8 @@ async function watchSorties(date, opts) {
         }
         continue;
       }
-      const already = orders.find((r) => r.broker_order_no === f.odno && r.side === 'buy' && ['filled', 'partial'].includes(r.status));
-      const sub = orders.find((r) => r.broker_order_no === f.odno && r.side === 'buy' && r.status === 'submitted');
+      const already = orders.find((r) => r.account_type === acctType && r.broker_order_no === f.odno && r.side === 'buy' && ['filled', 'partial'].includes(r.status));
+      const sub = orders.find((r) => r.account_type === acctType && r.broker_order_no === f.odno && r.side === 'buy' && r.status === 'submitted');
       const base = already || sub;
       if (!base) {
         if (!noted.has(f.odno)) {
@@ -399,9 +406,9 @@ async function watchSorties(date, opts) {
         }, opts);
         if (acct === 'paper') mockChanged = true;
       }
-      if (!positions.some((p) => p.broker_order_no === f.odno)) {
+      if (!positions.some((p) => p.account_type === acctType && p.broker_order_no === f.odno)) {
         positions.push({
-          id: crypto.randomUUID(), account_type: acct === 'real' ? 'real' : 'paper',
+          id: crypto.randomUUID(), account_type: acctType,
           nation: base.nation || null, symbol: f.symbol || base.symbol,
           qty: f.filled, avg_price: f.avgFill != null ? f.avgFill : base.price,
           stop_price: base.stop_price != null ? base.stop_price : null,
