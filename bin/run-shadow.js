@@ -67,6 +67,21 @@ async function buildProviders() {
       if (todayFills == null) throw new Error('체결조회 미선행');
       return todayFills;
     },
+    // 책사단 채점용 종가 조회(일봉 J — krx_official 태그 포함, 조회 전용). 심볼당 1회 캐시.
+    closes: (() => {
+      const cache = new Map();
+      return async (symbol, dateStr) => {
+        if (!cache.has(symbol)) {
+          try {
+            cache.set(symbol, await gate.query('real', 'dailyCandle', [symbol, 160], gateOpts));
+          } catch (e) {
+            cache.set(symbol, []);
+          }
+        }
+        const bar = (cache.get(symbol) || []).find((b) => b.date === dateStr);
+        return bar ? { close: bar.close, source: bar.source } : null;
+      };
+    })(),
     fillsReal: (ymd) => {
       // 실전 체결조회(조회 전용 — 주문 아님). 매수 자동 반영(watchSorties)용.
       if (todayFillsReal == null) throw new Error('실전 체결조회 미선행');
