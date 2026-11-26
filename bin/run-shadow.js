@@ -68,7 +68,12 @@ async function buildProviders() {
       if (!(sym in quotes)) throw new Error('시세 없음');
       return { symbol: sym, price: quotes[sym] };
     },
-    accountSnapshot: () => { throw new Error('계좌 조회 미연결(그림자 선택 항목)'); },
+    // 08:30 계좌 스냅샷 실연결(군주 승인 2026-11-26) — 관문 경유 잔고 '조회'(주문 아님).
+    // real·paper 각 1회/일(runSnapshot 멱등), 실패 시 09:30까지 다음 틱 재시도.
+    accountSnapshot: async (acct) => {
+      const b = await gate.query(acct === 'real' ? 'real' : 'mock', 'balance', [], gateOpts);
+      return { start_total_eval: b.total, start_cash: b.cash };
+    },
     kodexClose: () => {
       if (!kodexBar) throw new Error('KODEX 종가 결측');
       return kodexBar;
