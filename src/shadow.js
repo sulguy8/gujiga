@@ -188,14 +188,15 @@ function send(opts, event) {
 }
 
 // --- 계좌 스냅샷(공급자 주입 — 그림자에선 가짜/실조회, 주문 아님) ---
-function runSnapshot(date, opts) {
+// 공급자는 동기·비동기 모두 허용(실연결은 관문 경유 잔고 '조회' — 군주 승인 2026-11-26).
+async function runSnapshot(date, opts) {
   const dataDir = paths.resolveDataDir(opts);
   const existing = readLog(dataDir, 'daily_account_snapshot');
   const errors = [];
   for (const acct of ['real', 'paper']) {
     if (existing.some((r) => r.snapshot_date === date && r.account_type === acct)) continue;
     try {
-      const s = opts.providers.accountSnapshot(acct);
+      const s = await opts.providers.accountSnapshot(acct);
       ledger.append('daily_account_snapshot', {
         id: crypto.randomUUID(), snapshot_date: date, account_type: acct,
         start_total_eval: s.start_total_eval, start_cash: s.start_cash,
@@ -535,23 +536,30 @@ async function runOnce(opts) {
   const closeMin = toMin(calendar.closeTime(date, opts));
 
   // 08:30 계좌 스냅샷 + 기준선 적립 + 입금 감지(출사표 002)
+  // 실연결(군주 승인 2026-11-26) 후 조회 실패 대비: 09:30까지는 완료 기록을 미루고
+  // 다음 틱에 실패 계좌만 재시도한다(성공 계좌는 runSnapshot의 멱등이 건너뜀).
   if (minutes >= toMin('08:30') && !hasRec(log, 'snapshot_0830', date)) {
-    const r = runSnapshot(date, opts);
-    logJob(minutes > toMin('08:35') ? 'late' : 'run', 'snapshot_0830', date, opts, r.errors.length ? { errors: r.errors } : {});
-    ran.push('snapshot_0830');
+    const r = await runSnapshot(date, opts);
+    if (r.errors.length > 0 && minutes <= toMin('09:30')) {
+      // 완료 기록 없이 넘어감 — hasRec에 안 걸려 다음 틱 재시도(스팸 방지 위해 로그도 생략).
+      // 기준선·입금 감지도 완료 턴에 함께 실행한다(모두 멱등이지만 반복 호출 낭비 방지).
+    } else {
+      logJob(minutes > toMin('08:35') ? 'late' : 'run', 'snapshot_0830', date, opts, r.errors.length ? { errors: r.errors } : {});
+      ran.push('snapshot_0830');
 
-    // 기준선: KODEX 200 전일 KRX 종가(공급자 주입) → recordDay(멱등·결측 표시)
-    if (opts.providers.kodexClose) {
-      try {
-        const bar = opts.providers.kodexClose();
-        benchmark.recordDay({ date: bar.date, close: bar.close, source: bar.source, missing: bar.missing }, opts);
-      } catch (e) {
-        logJob('note', 'benchmark_0830', date, opts, { note: `기준선 적립 생략: ${e.message}` });
+      // 기준선: KODEX 200 전일 KRX 종가(공급자 주입) → recordDay(멱등·결측 표시)
+      if (opts.providers.kodexClose) {
+        try {
+          const bar = opts.providers.kodexClose();
+          benchmark.recordDay({ date: bar.date, close: bar.close, source: bar.source, missing: bar.missing }, opts);
+        } catch (e) {
+          logJob('note', 'benchmark_0830', date, opts, { note: `기준선 적립 생략: ${e.message}` });
+        }
       }
+      // 입금 감지: 직전 스냅샷 대비 총평가 변동 중 손익(captive)으로 설명되지 않는 부분 —
+      // 감지만 하고 군주 확인 대기로 기록(자동 recordFlow 금지 — 출사표 002 지시 1)
+      detectUnexplainedFlow(date, opts);
     }
-    // 입금 감지: 직전 스냅샷 대비 총평가 변동 중 손익(captive)으로 설명되지 않는 부분 —
-    // 감지만 하고 군주 확인 대기로 기록(자동 recordFlow 금지 — 출사표 002 지시 1)
-    detectUnexplainedFlow(date, opts);
   }
 
   // 08:31 군의(수집→판정→스냅샷→보고) + sox 3일 창 갱신 + PC 알림
@@ -696,4 +704,4 @@ async function runOnce(opts) {
   return { trading: true, date, ran, missed };
 }
 
-module.exports = { runOnce, updateSoxWindow, compareWithAside, watchSorties, JOBS };
+module.exports = { runOnce, updateSoxWindow, compareWithAside, watchSorties, runSnapshot, JOBS };
