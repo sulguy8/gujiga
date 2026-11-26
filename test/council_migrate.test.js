@@ -137,3 +137,75 @@ test('에지: council 없는 파일 건너뜀·모르는 책사/입장 보류 �
     assert.equal(lines(dir).length, before, 'agenda 유일성 — 중복 0');
   } finally { rm(dir); }
 });
+
+// ===== 지령 015: 2차 회의(중첩 형식)·원본 보존·amend 보정 =====
+function nestedReport() {
+  const r = sampleReport();
+  r.council.push({
+    agenda: '위군 두 번째 자리: 상=비움, 중=와이씨 13,900 매복, 하=알지노믹스 상향',
+    time: '2026-11-26 15:40',
+    source: 'Aside 군사 임시 회의(시범)',
+    opinions: [
+      { advisor: '곽가', view: '출병', conf: 3, why: '와이씨 20일선 위 눌림' },
+      { advisor: '노숙', view: '관망', conf: 3, why: '외부 변수 큼' },
+      { advisor: '순욱', view: '출병', conf: 2, why: '실적 상향 유효' },
+      { advisor: '법정', view: '관망', conf: 2, why: '외국인 순매도' },
+      { advisor: '육손', view: '관망', conf: 3, why: '기한 불일치' },
+      { advisor: '장송', view: '정보 없음', conf: 0, why: 'DART 미수집' },
+      { advisor: '가후', view: '반대', conf: 4, why: '이중 집계·쏠림' },
+    ],
+    synthesis: { by: '제갈량', tally: '출병 2, 관망 3, 반대 1, 정보 없음 1', pick: '상책(비움)' },
+    decision: { by: '군주', pick: '상책', time: '2026-11-26 15:45' },
+  });
+  return r;
+}
+
+test('지령015-1: 중첩 형식 이관 — 시각 기반 안건·why 보존·정보 없음 raw_view·시범 종합/군주 결정', () => {
+  const dir = makeTmpDir();
+  try {
+    const rp = writeReports(dir, { '2026-11-26.json': nestedReport() });
+    const r = migrate.migrateCouncilReports(rp, { dataDir: dir });
+    assert.equal(r.migrated, 14, '1차 7 + 2차 7');
+    assert.equal(r.synth, 1, '시범 종합 보조 행');
+    const rows = lines(dir);
+    const second = rows.filter((x) => !x.type && x.agenda_id === 'ASIDE-2026-11-26-1540');
+    assert.equal(second.length, 7, '2차 회의 7건');
+    assert.equal(second[0].ticker, null, '복합 안건 — 종목코드 없음');
+    assert.match(second.find((x) => x.advisor === '곽가').rationale, /20일선 위 눌림/, '원본 why 보존');
+    const jang = second.find((x) => x.advisor === '장송');
+    assert.equal(jang.raw_view, '정보 없음', '원문 의견 보존');
+    assert.equal(jang.stance, '관망');
+    const syn = rows.find((x) => x.type === 'aside_synthesis');
+    assert.match(syn.pick, /상책/, '시범 종합');
+    assert.equal(syn.decision_pick, '상책', '군주 결정');
+    // 멱등 재실행 — 추가 0
+    const r2 = migrate.migrateCouncilReports(rp, { dataDir: dir });
+    assert.equal(r2.migrated + r2.amended + r2.synth, 0, '재실행 쓰기 0');
+  } finally { rm(dir); }
+});
+
+test('지령015-2: 구버전으로 이관된 기존 행 — amend 보조 행으로 원본 보존 보강(멱등)', () => {
+  const dir = makeTmpDir();
+  try {
+    // 구버전 이관 흉내: 장송이 raw_view 없이 고정 문구로 들어간 상태
+    council.appendLines([{
+      id: 'CV-OLD-1', date: '2026-11-26', agenda_id: 'ASIDE-2026-11-26-232140', ticker: '232140',
+      agenda_type: 'entry', advisor: '장송', stance: '관망', confidence: 1,
+      rationale: '시범 기록 이관(Aside reports) — 232140 오군 진입(15:05)',
+      source: 'fallback', rank_at_time: { rank: 'jongsa', weight: 1 },
+      score_result: 'pending', rel_return: null, scored_at: null, disagreement: null,
+      created_at: 'x', migrated: true,
+    }], { dataDir: dir });
+    const rp = writeReports(dir, { '2026-11-26.json': sampleReport() });
+    const r = migrate.migrateCouncilReports(rp, { dataDir: dir });
+    assert.equal(r.amended, 1, '장송 raw_view 보강 1건');
+    const am = lines(dir).filter((x) => x.type === 'amend');
+    assert.equal(am.length, 1);
+    assert.equal(am[0].raw_view, '정보 없음');
+    // 원본 의견 행은 불변
+    assert.equal(lines(dir).find((x) => x.id === 'CV-OLD-1').rationale.includes('시범 기록 이관'), true);
+    // 멱등
+    migrate.migrateCouncilReports(rp, { dataDir: dir });
+    assert.equal(lines(dir).filter((x) => x.type === 'amend').length, 1, 'amend 중복 0');
+  } finally { rm(dir); }
+});

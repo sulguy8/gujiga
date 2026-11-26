@@ -156,3 +156,35 @@ test('에지: 유효 4건 미만 안건 — 의견 불충분 표시 / 없는 age
     assert.match(r3.body, /해당 안건 없음/, '과거 날짜 빈 응답');
   } finally { if (srv) await srv.close(); rm(dir); }
 });
+
+// ===== 지령 015: 이관 안건 표시 — 원본 의견·why·시범 종합·군주 결정·문구 =====
+test('지령015: 의견판 — raw_view(정보 없음)·amend 근거·시범 종합·군주 결정 표시', async () => {
+  const dir = makeTmpDir();
+  let srv;
+  try {
+    council.appendLines(ADVISORS.map((adv, i) => ({
+      id: `CV-M-${i}`, date: '2026-11-26', agenda_id: 'ASIDE-2026-11-26-1540', ticker: null,
+      agenda_label: '위군 두 번째 자리(상·중·하책)', agenda_type: 'entry', advisor: adv,
+      stance: adv === '장송' ? '관망' : '관망', confidence: 2,
+      rationale: adv === '곽가' ? '와이씨 20일선 위 눌림' : `${adv} 근거`,
+      raw_view: adv === '장송' ? '정보 없음' : null,
+      source: adv === '장송' ? 'fallback' : 'ai', rank_at_time: { rank: 'jongsa', weight: 1 },
+      score_result: 'pending', rel_return: null, scored_at: null, disagreement: null,
+      created_at: '2026-11-26T15:40:00+09:00', migrated: true,
+    })), { dataDir: dir });
+    council.appendLines([{
+      type: 'aside_synthesis', agenda_id: 'ASIDE-2026-11-26-1540', date: '2026-11-26',
+      tally: '출병 2, 관망 3, 반대 1', pick: '상책(비움)', decision_pick: '상책',
+      decided_by: '군주', decided_at: '2026-11-26 15:45', created_at: 'x',
+    }], { dataDir: dir });
+    srv = await boot(dir);
+    const r = await request(srv.port, '/council');
+    assert.match(r.body, /정보 없음/, '원본 의견 보존 표시');
+    assert.match(r.body, /20일선 위 눌림/, '원본 근거');
+    assert.match(r.body, /제갈량 종합\(시범 기록\)/, '시범 종합');
+    assert.match(r.body, /상책\(비움\)/, 'pick');
+    assert.match(r.body, /군주 결정/, '군주 결정 표시');
+    assert.match(r.body, /위군 두 번째 자리/, '복합 안건 라벨');
+    assert.ok(!/의견 불충분/.test(r.body), '이관분에 불충분 오표기 없음');
+  } finally { if (srv) await srv.close(); rm(dir); }
+});

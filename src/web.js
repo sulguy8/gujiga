@@ -22,6 +22,7 @@ const generalRank = require('./general_rank');
 const paths2 = require('./paths');
 const council = require('./council');
 const councilScore = require('./council_score');
+const symbols = require('./symbols');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'web.json');
 const LOOPBACK = '127.0.0.1';
@@ -116,13 +117,19 @@ function render(data, opts2) {
   } else if (cs.none || cs.rows.length === 0) {
     H.push('<p class="muted">전군 주둔 중 — 출병한 성 없음</p>');
   } else {
-    H.push('<table><tr><th>성(종목)</th><th>병사</th><th>투입</th><th>성벽(손절선)</th><th>성벽까지</th></tr>');
+    H.push('<table><tr><th>성(종목)</th><th>병사</th><th>투입</th><th>평가</th><th>수익률</th><th>성벽(손절선)</th><th>성벽까지</th></tr>');
     for (const r of cs.rows) {
-      H.push(`<tr><td>${esc(r.name)}(${esc(r.symbol)})${r.nation ? ` <span class="muted">${esc(r.nation)}</span>` : ''}</td>` +
+      const nm = r.name && r.name !== r.symbol ? `${esc(r.name)}(${esc(r.symbol)})` : esc(r.symbol);
+      H.push(`<tr><td>${nm}${r.nation ? ` <span class="muted">${esc(r.nation)}</span>` : ''}</td>` +
         `<td class="num">${r.troops}명</td><td class="num">${won(r.amount)}원</td>` +
-        `<td class="num">${won(r.stopPrice)}원</td><td>${r.stopDistance == null ? '없음(시세 미연결)' : esc(r.stopDistance)}</td></tr>`);
+        `<td class="num">${r.evalAmount != null ? won(r.evalAmount) + '원' : '-'}</td>` +
+        `<td class="num">${r.returnPct != null ? esc(String(r.returnPct)) + '%' : '-'}</td>` +
+        `<td class="num">${won(r.stopPrice)}원</td><td>${r.stopDistance == null ? '없음(시세 미연결)' : esc(String(r.stopDistance)) + '%'}</td></tr>`);
     }
     H.push('</table>');
+    H.push(cs.quoteAt
+      ? `<p class="muted">시세 기준: ${esc(String(cs.quoteAt))} (그림자 최근 조회 — 실시간 아님)</p>`
+      : '<p class="muted">시세 캐시 없음 — 그림자 기동 후 생성</p>');
   }
   H.push('</section>');
 
@@ -166,7 +173,8 @@ function render(data, opts2) {
   } catch (e) { /* 집계 실패 시 생략 */ }
 
   // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
-  H.push('<p><a href="/nations">세력전 대시보드 (촉·위·오)</a></p>');
+  H.push('<p><a href="/nations">세력전 대시보드 (촉·위·오)</a> · <a href="/council">책사단 의견판</a> · ' +
+    '<a href="/council/merit">책사단 공적판</a> · <a href="/hypotheses">병법서</a> · <a href="/merit">논공행상</a></p>');
   H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
   H.push('<p class="muted" style="font-size:12px">읽기 전용 현황판 — 숫자는 장부 값 그대로. 참고용, 최종 결정은 본인.</p>');
   H.push('</main></body></html>');
@@ -350,12 +358,17 @@ function renderNations(opts, weekParam) {
   const today = (opts && opts.today) || new Date().toISOString().slice(0, 10);
   const from = weekParam || mondayOf(today);
   const to = addDays(from, 4);
-  const { ledgers, violations } = nation.computeLedger(opts);
+  // 평가는 그림자 시세 캐시(읽기 전용)로 — 없으면 원가 기준. 정합성 검사는 원가끼리 비교(캐시와 무관).
+  const qc = board.quotesCache(opts);
+  const { ledgers, violations } = nation.computeLedger(opts, qc ? qc.quotes : undefined);
   const integ = nation.checkIntegrity(opts);
   const weekly = nation.weeklyReport({ from, to }, opts);
   const bench = benchNationReturns(opts);
 
   const H = pageHead('세력전 — 촉·위·오');
+  H.push(qc
+    ? `<p class="muted">평가 기준: ${esc(String(qc.updated_at))} 시세(그림자 최근 조회 — 실시간 아님)</p>`
+    : '<p class="muted">시세 캐시 없음 — 평가는 원가(평단) 기준</p>');
   if (!integ.ok) {
     const n = integ.warnings.length;
     H.splice(2, 0, `<div style="background:#b3261e;color:#fff;padding:8px 16px;font-weight:bold">장부 어긋남 — 정합성 경고 ${n}건: 저장 장부와 체결 재계산이 다르다. 일일 점검 필요</div>`);
@@ -454,7 +467,11 @@ const STANCE_BADGE = { '출병': '출병', '관망': '관망', '반대': '반대
 
 // 의견판: 안건별 7인 의견 표 + 제갈량 종합 박스(가중합·불일치율) + 가후 고정 영역
 function renderCouncil(opts, agendaFilter, dateFilter) {
-  const all = council.readVerdicts(opts).filter((r) => !r.type);
+  const everything = council.readVerdicts(opts);
+  const all = everything.filter((r) => !r.type);
+  // 보조 행(지령 015): amend(원본 보존 보강 — 의견에 조인), aside_synthesis(시범 종합·군주 결정)
+  const amends = new Map(everything.filter((r) => r.type === 'amend').map((r) => [`${r.agenda_id}|${r.advisor}`, r]));
+  const asideSynth = new Map(everything.filter((r) => r.type === 'aside_synthesis').map((r) => [r.agenda_id, r]));
   let rows = all;
   if (agendaFilter) rows = rows.filter((r) => r.agenda_id === agendaFilter);
   // 날짜 이동(SCR-009): ?date=YYYY-MM-DD — 기본은 최신 날짜(장부 누적 시 무한 나열 방지)
@@ -483,25 +500,43 @@ function renderCouncil(opts, agendaFilter, dateFilter) {
     const agendas = [...byAgenda.entries()].sort((a, b) => String(b[1][0].date).localeCompare(String(a[1][0].date)));
     for (const [agendaId, items] of agendas) {
       const first = items[0];
-      const syn = items.find((r) => r.advisor === '제갈량');
+      const syn = items.find((r) => r.advisor === '제갈량' && r.source === 'synthesis' && !r.migrated);
       const gahu = items.find((r) => r.advisor === '가후');
       const opinions = items.filter((r) => r.advisor !== '제갈량');
-      H.push(`<section><h2>${esc(first.date)} · ${esc(first.name || first.ticker)}(${esc(first.ticker)}) · ${first.agenda_type === 'hold' ? '보유 점검' : '진입 검토'} <span class="muted">${esc(agendaId)}</span></h2>`);
+      const title = first.ticker
+        ? `${esc(first.name || symbols.nameOf(first.ticker, opts) || first.ticker)}(${esc(first.ticker)})`
+        : esc(first.agenda_label || '복합 안건');
+      H.push(`<section><h2>${esc(first.date)} · ${title} · ${first.agenda_type === 'hold' ? '보유 점검' : '진입 검토'} <span class="muted">${esc(agendaId)}</span></h2>`);
+      if (first.agenda_label && first.ticker) H.push(`<p class="muted">${esc(first.agenda_label)}</p>`);
       H.push('<table><tr><th>책사</th><th>의견</th><th>확신</th><th>근거</th><th>관직(기록 시점)</th><th>생성</th></tr>');
       for (const o of opinions) {
+        const am = amends.get(`${agendaId}|${o.advisor}`);
+        const rawView = o.raw_view || (am && am.raw_view) || null; // 원본 의견('정보 없음' 등) 보존 표시
+        const rationale = (am && am.rationale) || o.rationale;
         const RANK_KO = { jongsa: '종사', chamgun: '참군', junglangjang: '군사중랑장' };
         const rankKo = o.rank_at_time ? `${RANK_KO[o.rank_at_time.rank] || esc(String(o.rank_at_time.rank))} x${esc(String(o.rank_at_time.weight))}` : '-';
         const src = o.source === 'fallback' ? '<span class="muted">폴백</span>' : o.source === 'rule' ? '숫자 규칙' : 'AI';
-        H.push(`<tr><td>${esc(o.advisor)}</td><td>${esc(STANCE_BADGE[o.stance] || o.stance)}</td><td class="num">${esc(String(o.confidence))}</td><td>${esc(o.rationale)}</td><td>${rankKo}</td><td>${src}</td></tr>`);
+        const stanceCell = rawView ? `<span class="muted">${esc(rawView)}</span>` : esc(STANCE_BADGE[o.stance] || o.stance);
+        H.push(`<tr><td>${esc(o.advisor)}</td><td>${stanceCell}</td><td class="num">${esc(String(o.confidence))}</td><td>${esc(rationale)}</td><td>${rankKo}</td><td>${src}</td></tr>`);
       }
       H.push('</table>');
+      const aSyn = asideSynth.get(agendaId);
       if (syn) {
         H.push(`<p><b>제갈량 종합: ${esc(syn.stance)}</b> (확신 ${esc(String(syn.confidence))}) — ${esc(syn.rationale)}` +
           (syn.disagreement != null ? ` · 불일치율 ${esc(String(syn.disagreement))}%` : '') + '</p>');
-      } else {
+      } else if (aSyn) {
+        H.push(`<p><b>제갈량 종합(시범 기록)</b>: ${esc(aSyn.tally || '')} → ${esc(aSyn.pick || '')}</p>`);
+      } else if (items.some((r) => r.migrated)) {
+        H.push('<p class="muted">엔진 종합 없음 — 시범 기록 이관분(원본에 종합 미기재)</p>');
+      } else if (opinions.filter((r) => r.source !== 'fallback').length < 4) {
         H.push('<p class="muted">종합 없음 — 의견 불충분(유효 의견 4건 미만)</p>');
+      } else {
+        H.push('<p class="muted">종합 미기록</p>');
       }
-      if (gahu) H.push(`<p><b>가후(반대 전담 — 항상 표시)</b>: ${esc(gahu.stance)} · ${esc(gahu.rationale)}</p>`);
+      if (aSyn && aSyn.decision_pick) {
+        H.push(`<p><b>군주 결정</b>: ${esc(aSyn.decision_pick)}${aSyn.decided_at ? ` <span class="muted">(${esc(String(aSyn.decided_at))})</span>` : ''}</p>`);
+      }
+      if (gahu) H.push(`<p><b>가후(반대 전담 — 항상 표시)</b>: ${esc(gahu.raw_view || gahu.stance)} · ${esc(gahu.rationale)}</p>`);
       H.push('</section>');
     }
   }

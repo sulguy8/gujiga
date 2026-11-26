@@ -31,6 +31,17 @@ async function buildProviders() {
       quotes[p.symbol] = q.price;
     } catch (e) { /* 결측 — scout이 실패 처리 */ }
   }
+  // 최근 시세 캐시(지령 015): 현황판이 '읽기 전용'으로 평가·성벽 거리를 계산할 수 있게
+  // 그림자가 방금 조회한 시세를 기준 시각과 함께 남긴다(쓰는 쪽은 그림자뿐).
+  if (Object.keys(quotes).length > 0) {
+    try {
+      const paths = require('../src/paths');
+      const dir = path.join(paths.resolveDataDir({}), 'market_cache');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'quotes_latest.json'),
+        JSON.stringify({ updated_at: new Date().toISOString(), quotes }, null, 2) + '\n', 'utf8');
+    } catch (e) { /* 캐시 실패는 치명 아님 */ }
+  }
   // KODEX 200 전일 종가(기준선 적립 — 출사표 002). 실패 시 provider가 던지고 데몬은 결측 기록.
   let kodexBar = null;
   try {
