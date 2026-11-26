@@ -618,6 +618,7 @@ async function runOnce(opts) {
   // 장중 5분 척후 → [액션 필요] 보고 시 insight(판정 필요), 성벽 '이탈'은 advise(기준2)
   if (minutes >= openMin && minutes <= closeMin && scoutDue(dataDir, date, minutes, opts)) {
     const pending = [];
+    const councilSent = new Set(); // 같은 회차에 같은 심볼 보고 2건 — 안건 중복 방어(군사 지적)
     const hook = (e) => {
       if (e.kind === 'report') {
         pending.push(send(opts, {
@@ -629,7 +630,9 @@ async function runOnce(opts) {
         // 하루 1심: 아침 군의에서 이미 기록된 안건이면 싣지 않는다(출력 낭비 방지 — 군사 지적 2026-11-26).
         pending.push((async () => {
           const agendaId = `AG-${date}-${e.symbol}-hold`;
-          const already = councilMod.readVerdicts(opts).some((r) => !r.type && r.agenda_id === agendaId);
+          const already = councilSent.has(agendaId) ||
+            councilMod.readVerdicts(opts).some((r) => !r.type && r.agenda_id === agendaId);
+          councilSent.add(agendaId);
           let agendas = [];
           if (!already) {
             const dist = e.line != null ? Math.round(((e.price - e.line) / e.line) * 1000) / 10 : undefined;

@@ -71,7 +71,8 @@ test('시나리오1·2·5: 의견판 — 7인 표·종합 박스·불일치율·
     const r = await request(srv.port, '/council');
     assert.equal(r.status, 200);
     for (const adv of ADVISORS) assert.ok(r.body.includes(adv), `${adv} 표에 존재`);
-    assert.match(r.body, /제갈량|종합/, '종합 박스');
+    assert.match(r.body, /제갈량 종합: 관망/, '종합 박스(입장 포함)');
+    assert.match(r.body, /가중 다수결/, '가중합 내역');
     assert.match(r.body, /14\.3/, '불일치율 수치');
     assert.match(r.body, /가후.*반대|반대.*가후/s, '가후 고정 영역(소수 의견)');
     assert.match(r.body, /폴백|fallback/i, '폴백 표시');
@@ -116,6 +117,7 @@ test('시나리오6: 쓰기·주문 액션 없음 — POST 405·form 0', async (
     seedAgenda(dir, 'AG-1');
     srv = await boot(dir);
     assert.equal((await request(srv.port, '/council', 'POST')).status, 405, 'POST 거부');
+    assert.equal((await request(srv.port, '/council/merit', 'POST')).status, 405, '공적판 POST 거부');
     for (const p of ['/council', '/council/merit']) {
       const r = await request(srv.port, p);
       assert.ok(!/<form|<button|user_confirmed|주문 실행/i.test(r.body), `${p} 쓰기 액션 0`);
@@ -148,6 +150,9 @@ test('에지: 유효 4건 미만 안건 — 의견 불충분 표시 / 없는 age
     assert.match(r.body, /의견 불충분/, '종합 대신 불충분 상태');
     const r2 = await request(srv.port, '/council?agenda=NOPE');
     assert.equal(r2.status, 200, '없는 안건 — 정상');
-    assert.match(r2.body, /안건 없음/, '빈 응답');
+    assert.match(r2.body, /해당 안건 없음/, '필터 미스 전용 문구(빈 장부와 구분)');
+    const r3 = await request(srv.port, '/council?date=2020-01-01');
+    assert.equal(r3.status, 200, '과거 날짜 조회 — 정상');
+    assert.match(r3.body, /해당 안건 없음/, '과거 날짜 빈 응답');
   } finally { if (srv) await srv.close(); rm(dir); }
 });

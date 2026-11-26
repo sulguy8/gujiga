@@ -453,17 +453,32 @@ function gatePort() {
 const STANCE_BADGE = { '출병': '출병', '관망': '관망', '반대': '반대', '회군': '회군' };
 
 // 의견판: 안건별 7인 의견 표 + 제갈량 종합 박스(가중합·불일치율) + 가후 고정 영역
-function renderCouncil(opts, agendaFilter) {
-  let rows = council.readVerdicts(opts).filter((r) => !r.type);
+function renderCouncil(opts, agendaFilter, dateFilter) {
+  const all = council.readVerdicts(opts).filter((r) => !r.type);
+  let rows = all;
   if (agendaFilter) rows = rows.filter((r) => r.agenda_id === agendaFilter);
+  // 날짜 이동(SCR-009): ?date=YYYY-MM-DD — 기본은 최신 날짜(장부 누적 시 무한 나열 방지)
+  if (!agendaFilter) {
+    const dates = [...new Set(all.map((r) => r.date))].sort().reverse();
+    const target = dateFilter || dates[0];
+    if (target) rows = rows.filter((r) => r.date === target);
+  }
   const H = pageHead('책사단 — 의견판');
+  {
+    const dates = [...new Set(all.map((r) => r.date))].sort().reverse();
+    if (dates.length > 1) {
+      H.push(`<p class="muted">날짜 이동: ${dates.map((d) => `<a href="/council?date=${esc(d)}">${esc(d)}</a>`).join(' · ')}</p>`);
+    }
+  }
   const byAgenda = new Map();
   for (const r of rows) {
     if (!byAgenda.has(r.agenda_id)) byAgenda.set(r.agenda_id, []);
     byAgenda.get(r.agenda_id).push(r);
   }
   if (byAgenda.size === 0) {
-    H.push('<section><p class="muted">오늘 안건 없음 — 결정할 것이 있는 날에만 책사단이 열린다</p></section>');
+    H.push(agendaFilter || dateFilter
+      ? '<section><p class="muted">해당 안건 없음 — 조건에 맞는 기록이 없다(전체는 /council)</p></section>'
+      : '<section><p class="muted">오늘 안건 없음 — 결정할 것이 있는 날에만 책사단이 열린다</p></section>');
   } else {
     const agendas = [...byAgenda.entries()].sort((a, b) => String(b[1][0].date).localeCompare(String(a[1][0].date)));
     for (const [agendaId, items] of agendas) {
@@ -474,14 +489,15 @@ function renderCouncil(opts, agendaFilter) {
       H.push(`<section><h2>${esc(first.date)} · ${esc(first.name || first.ticker)}(${esc(first.ticker)}) · ${first.agenda_type === 'hold' ? '보유 점검' : '진입 검토'} <span class="muted">${esc(agendaId)}</span></h2>`);
       H.push('<table><tr><th>책사</th><th>의견</th><th>확신</th><th>근거</th><th>관직(기록 시점)</th><th>생성</th></tr>');
       for (const o of opinions) {
-        const rankKo = o.rank_at_time ? `${o.rank_at_time.rank === 'jongsa' ? '종사' : o.rank_at_time.rank === 'chamgun' ? '참군' : '군사중랑장'} x${o.rank_at_time.weight}` : '-';
+        const RANK_KO = { jongsa: '종사', chamgun: '참군', junglangjang: '군사중랑장' };
+        const rankKo = o.rank_at_time ? `${RANK_KO[o.rank_at_time.rank] || esc(String(o.rank_at_time.rank))} x${esc(String(o.rank_at_time.weight))}` : '-';
         const src = o.source === 'fallback' ? '<span class="muted">폴백</span>' : o.source === 'rule' ? '숫자 규칙' : 'AI';
-        H.push(`<tr><td>${esc(o.advisor)}</td><td>${esc(STANCE_BADGE[o.stance] || o.stance)}</td><td class="num">${o.confidence}</td><td>${esc(o.rationale)}</td><td>${rankKo}</td><td>${src}</td></tr>`);
+        H.push(`<tr><td>${esc(o.advisor)}</td><td>${esc(STANCE_BADGE[o.stance] || o.stance)}</td><td class="num">${esc(String(o.confidence))}</td><td>${esc(o.rationale)}</td><td>${rankKo}</td><td>${src}</td></tr>`);
       }
       H.push('</table>');
       if (syn) {
-        H.push(`<p><b>제갈량 종합: ${esc(syn.stance)}</b> (확신 ${syn.confidence}) — ${esc(syn.rationale)}` +
-          (syn.disagreement != null ? ` · 불일치율 ${syn.disagreement}%` : '') + '</p>');
+        H.push(`<p><b>제갈량 종합: ${esc(syn.stance)}</b> (확신 ${esc(String(syn.confidence))}) — ${esc(syn.rationale)}` +
+          (syn.disagreement != null ? ` · 불일치율 ${esc(String(syn.disagreement))}%` : '') + '</p>');
       } else {
         H.push('<p class="muted">종합 없음 — 의견 불충분(유효 의견 4건 미만)</p>');
       }
@@ -511,11 +527,27 @@ function renderCouncilMerit(opts) {
     for (const n of names.sort()) {
       const r = ranks[n];
       const badge = r.counted < 10 ? ' <b>[참고 수준 — 표본 10건 미만]</b>' : '';
-      H.push(`<tr><td>${esc(n)}</td><td>${esc(r.label || r.rank)}</td><td class="num">x${r.weight}</td>` +
-        `<td class="num">${r.counted}건</td><td class="num">${r.hit_rate != null ? r.hit_rate + '%' : '-'}</td>` +
-        `<td class="num">${r.recent10_hit_rate != null ? r.recent10_hit_rate + '%' : '-'}</td><td>${badge}</td></tr>`);
+      H.push(`<tr><td>${esc(n)}</td><td>${esc(r.label || r.rank)}</td><td class="num">x${esc(String(r.weight))}</td>` +
+        `<td class="num">${esc(String(r.counted))}건</td><td class="num">${r.hit_rate != null ? esc(String(r.hit_rate)) + '%' : '-'}</td>` +
+        `<td class="num">${r.recent10_hit_rate != null ? esc(String(r.recent10_hit_rate)) + '%' : '-'}</td><td>${badge}</td></tr>`);
     }
     H.push('</table>');
+    // 최근 판정 목록(SCR-010 3항): 안건·책사·입장·결과·상대 수익률 — 최근 20건
+    const allRows = council.readVerdicts(opts);
+    const byId = new Map(allRows.filter((x) => !x.type).map((x) => [x.id, x]));
+    const recentScores = allRows.filter((x) => x.type === 'score')
+      .sort((a, b) => String(b.scored_at).localeCompare(String(a.scored_at))).slice(0, 20);
+    if (recentScores.length > 0) {
+      H.push('<h3>최근 판정</h3><table><tr><th>채점일</th><th>안건</th><th>책사</th><th>입장</th><th>결과</th><th>상대 수익률</th></tr>');
+      for (const ev of recentScores) {
+        const v = byId.get(ev.verdict_id);
+        if (!v) continue;
+        H.push(`<tr><td>${esc(String(ev.scored_at))}</td><td>${esc(v.name || v.ticker)}(${esc(String(v.ticker))})</td>` +
+          `<td>${esc(v.advisor)}</td><td>${esc(v.stance)}</td><td>${esc(ev.score_result)}</td>` +
+          `<td class="num">${ev.rel_return != null ? esc(String(ev.rel_return)) + '%p' : '-'}</td></tr>`);
+      }
+      H.push('</table>');
+    }
     for (const n of names.sort()) {
       const h = (ranks[n].history || []);
       if (h.length === 0) continue;
@@ -589,9 +621,9 @@ function start(opts) {
     }
     // 책사단(TSK-027 / SCR-009·010) — 읽기 전용 조회
     if (url === '/council') {
-      const agendaFilter = new URL(req.url, 'http://x').searchParams.get('agenda');
+      const q = new URL(req.url, 'http://x').searchParams;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderCouncil(opts, agendaFilter));
+      res.end(renderCouncil(opts, q.get('agenda'), q.get('date')));
       return;
     }
     if (url === '/council/merit') {

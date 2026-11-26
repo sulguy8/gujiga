@@ -36,6 +36,7 @@ function recordTime(obj, date) {
 
 // opts.dryRun: 본장부를 기준으로 '실제 이관될 건수'만 집계하고 쓰기는 생략(멱등 미리보기).
 function migrateCouncilReports(reportsDir, opts) {
+  opts = opts || {};
   const out = { migrated: 0, skipped: 0, deferred: [] };
   if (!fs.existsSync(reportsDir)) return out;
   const files = fs.readdirSync(reportsDir).filter((f) => f.endsWith('.json')).sort();
