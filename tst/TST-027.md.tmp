@@ -1,0 +1,23 @@
+---
+id: TST-027
+type: test
+title: "council 이관 검증: 표본 정합·멱등"
+status: draft
+note_type: feature_full
+owner: 조용수
+approved_by: 
+approved_at: 
+relates_to:
+  notes: []
+  requirements: []
+  datamodel: []
+  screen: []
+  architecture: []
+  tasks: [TSK-028]
+  tests: []
+  retrospectives: []
+  references: []
+created_at: 2026-11-26T01:29:01Z
+updated_at: 2026-11-26T01:29:01Z
+test_result: pending
+---
