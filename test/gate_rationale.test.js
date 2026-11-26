@@ -65,8 +65,9 @@ async function boot() {
     cash_ratio_min: 0.3, correlation_max: 0.7, sample_min: 10, updated_at: 'x',
   }, { dataDir: dir });
   seedHyps(dir);
+  state.write('watchlist', [{ symbol: '005930', status: 'ready' }], { dataDir: dir });
   const srv = await fakeKis();
-  const opts = { dataDir: dir, keysPath, baseUrls: { mock: srv.url, real: srv.url }, gapMs: 5, fillPollMs: 10, fillPollMax: 30, now: '2026-11-25T09:30:00+09:00' };
+  const opts = { dataDir: dir, keysPath, baseUrls: { mock: srv.url, real: srv.url }, gapMs: 5, fillPollMs: 10, fillPollMax: 30, now: '2026-11-25T09:30:00+09:00', realOrderPolicy: { human: true } };
   return { dir, srv, opts };
 }
 async function down(s) { await s.srv.close(); rm(s.dir); }
@@ -80,6 +81,11 @@ function draft(troops, hypIds, over) {
     qty: troops, price: 10000, user_confirmed: true, created_by: 'human', reason: '근거 검사 테스트',
     hypothesis_ids: hypIds,
   }, over || {});
+}
+
+// 실전 매수 초안 — 등급 상한(grade_cap)은 실전에만 적용(2026-11-26 군주 결정)
+function draftReal(troops, hypIds) {
+  return draft(troops, hypIds, { account_type: 'real', nation: undefined });
 }
 
 // ===== 시나리오 1·2: no_rationale =====
@@ -118,39 +124,52 @@ test('시나리오3: 검증됨 근거 20명(현령 전부) 통과', async () => 
 });
 
 // ===== 시나리오 4: 검증 중 — 절반 버림(현령 10명) =====
-test('시나리오4: 검증 중 — 11명 차단(grade_cap)·10명 통과', async () => {
+test('시나리오4: 검증 중(실전) — 11명 차단(grade_cap)·10명 통과', async () => {
   const s = await boot();
   try {
-    const r11 = await gate.submit(draft(11, ['HYP-T']), s.opts);
+    const r11 = await gate.submit(draftReal(11, ['HYP-T']), s.opts);
     assert.equal(r11.reason, 'grade_cap');
     const row = lastBlocked(s.dir);
     assert.equal(row.block_reason, 'grade_cap');
     assert.ok(JSON.stringify(row.detail).includes('10'), '상한 수치 기록');
-    const r10 = await gate.submit(draft(10, ['HYP-T']), s.opts);
+    const r10 = await gate.submit(draftReal(10, ['HYP-T']), s.opts);
     assert.equal(r10.ok, true);
   } finally {
     await down(s);
   }
 });
 
-// ===== 시나리오 5: 가설 — 정찰대 10명 =====
-test('시나리오5: 가설 근거 — 11명 차단·10명 통과', async () => {
+// ===== 시나리오 4-보강: 모의 세력전 — 등급 상한 미적용(2026-11-26 군주 결정) =====
+test('시나리오4-보강: 모의는 등급 상한 미적용 — 검증 중·가설 11명 통과, 세력전 25만은 유지', async () => {
   const s = await boot();
   try {
-    assert.equal((await gate.submit(draft(11, ['HYP-H']), s.opts)).reason, 'grade_cap');
-    assert.equal((await gate.submit(draft(10, ['HYP-H']), s.opts)).ok, true);
+    assert.equal((await gate.submit(draft(11, ['HYP-T']), s.opts)).ok, true, '모의 검증 중 11명 통과');
+    assert.equal((await gate.submit(draft(11, ['HYP-H']), s.opts)).ok, true, '모의 가설 11명 통과');
+    // 등급 상한만 풀린다 — 세력전 종목당 25만(REQ-009)은 그대로
+    assert.equal((await gate.submit(draft(26, ['HYP-H']), s.opts)).reason, 'nation_limit');
+  } finally {
+    await down(s);
+  }
+});
+
+// ===== 시나리오 5: 가설 — 정찰대 10명 =====
+test('시나리오5: 가설 근거(실전) — 11명 차단·10명 통과', async () => {
+  const s = await boot();
+  try {
+    assert.equal((await gate.submit(draftReal(11, ['HYP-H']), s.opts)).reason, 'grade_cap');
+    assert.equal((await gate.submit(draftReal(10, ['HYP-H']), s.opts)).ok, true);
   } finally {
     await down(s);
   }
 });
 
 // ===== 시나리오 6: 복수 인용 — 최고 등급 기준 =====
-test('시나리오6: 검증 중+가설 → 최고 등급(검증 중) 10명 기준·검증됨 섞이면 전부', async () => {
+test('시나리오6: (실전) 검증 중+가설 → 최고 등급(검증 중) 10명 기준·검증됨 섞이면 전부', async () => {
   const s = await boot();
   try {
-    assert.equal((await gate.submit(draft(10, ['HYP-T', 'HYP-H']), s.opts)).ok, true);
-    assert.equal((await gate.submit(draft(11, ['HYP-T', 'HYP-H']), s.opts)).reason, 'grade_cap');
-    assert.equal((await gate.submit(draft(20, ['HYP-V', 'HYP-H']), s.opts)).ok, true, '최고 등급=검증됨');
+    assert.equal((await gate.submit(draftReal(10, ['HYP-T', 'HYP-H']), s.opts)).ok, true);
+    assert.equal((await gate.submit(draftReal(11, ['HYP-T', 'HYP-H']), s.opts)).reason, 'grade_cap');
+    assert.equal((await gate.submit(draftReal(20, ['HYP-V', 'HYP-H']), s.opts)).ok, true, '최고 등급=검증됨');
   } finally {
     await down(s);
   }
@@ -168,16 +187,16 @@ test('시나리오7: 근거 없는 매도 통과(회군 보장)', async () => {
 });
 
 // ===== 경계: 태수 15/16·승상 재량 =====
-test('경계: 태수 검증 중 15 통과·16 차단 / 승상 재량(가설만 10명 고정)', async () => {
+test('경계: (실전) 태수 검증 중 15 통과·16 차단 / 승상 재량(가설만 10명 고정)', async () => {
   const s = await boot();
   try {
     generalRank.promote('taesu', { dataDir: s.dir });
-    assert.equal((await gate.submit(draft(15, ['HYP-T']), s.opts)).ok, true, '태수 절반 15');
-    assert.equal((await gate.submit(draft(16, ['HYP-T']), s.opts)).reason, 'grade_cap');
+    assert.equal((await gate.submit(draftReal(15, ['HYP-T']), s.opts)).ok, true, '태수 절반 15');
+    assert.equal((await gate.submit(draftReal(16, ['HYP-T']), s.opts)).reason, 'grade_cap');
     generalRank.promote('seungsang', { dataDir: s.dir });
-    // 승상 재량이라도 세력전 종목당 25만(TSK-023)은 별도 상한 — 25명(25만)으로 재량 입증
-    assert.equal((await gate.submit(draft(25, ['HYP-T']), s.opts)).ok, true, '승상 검증 중 재량');
-    assert.equal((await gate.submit(draft(11, ['HYP-H']), s.opts)).reason, 'grade_cap', '가설은 승상도 10명');
+    // 승상 재량(per_stock null) — 1회 한도는 태수 동기화 값(30만)이 남으므로 25명(25만)으로 재량 입증
+    assert.equal((await gate.submit(draftReal(25, ['HYP-T']), s.opts)).ok, true, '승상 검증 중 재량');
+    assert.equal((await gate.submit(draftReal(11, ['HYP-H']), s.opts)).reason, 'grade_cap', '가설은 승상도 10명');
   } finally {
     await down(s);
   }

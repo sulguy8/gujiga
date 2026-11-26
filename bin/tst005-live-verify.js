@@ -177,7 +177,10 @@ async function expectBlock(label, draft, wantReason) {
   state.write('positions', [], opts);
 
   // --- ⑦ 관직·등급·세력전(상태만 — 호출 0) ---
-  await expectBlock('12 등급 상한(검증 중 가설 16명, 태수 절반 15)', paperDraft({ troops: 16, qty: 16, hypothesis_ids: ['HYP-T'] }), 'grade_cap');
+  // 12 등급 상한: 실전 전용으로 변경(2026-11-26 군주 결정 — 모의 세력전 미적용).
+  //    모의로는 재현 불가, 실전 매수는 이 스크립트 허용 밖 → 보류(짝 단위 테스트 TST-019가 실전 경로 검증).
+  results.push({ label: '12 등급 상한(실전 전용)', want: 'grade_cap', got: '보류(모의 미적용 — 군주 결정 2026-11-26, 실전 검증은 TST-019)', ok: null });
+  say('-- 12 등급 상한: 보류(실전 전용 — 모의 세력전 미적용)');
   await expectBlock('13 세력전 종목당 25만(26만)', paperDraft({ troops: 26, qty: 26 }), 'nation_limit');
   state.write('positions', [
     { id: 'p1', account_type: 'paper', nation: 'chok', symbol: '000001', qty: 1, avg_price: 10000, stop_price: 8000, target_price: 15000, deadline: '2026-12-10', status: 'open' },

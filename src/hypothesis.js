@@ -322,6 +322,8 @@ function mapStatus(label) {
   return 'hypothesis';
 }
 function firstDate(text) {
+  const iso = text.match(/(\d{4})-(\d{2})-(\d{2})/); // ISO 날짜 우선(예: 2026-11-26)
+  if (iso) return iso[0];
   const m = text.match(/(\d{1,2})\/(\d{1,2})/);
   if (!m) return '2026-11-25'; // 날짜 없는 증거 셀은 이관일
   return `2026-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
@@ -372,10 +374,10 @@ function migratePatterns(srcPath, opts) {
   const L = [
     '# patterns.md 이관 리포트 (TSK-019)',
     '',
-    `- 이관 가설 ${hypN}건(A1~A6·B1~B6·C1~C5·D1~D3) · 증거 ${evN}건(증거 칸 1개 = 1건, '기록 예정' 제외)`,
-    `- 상태 매핑: 검증 중→testing · 가설→hypothesis · 사용 중→verified (원문 라벨은 original_status 보존 — 임의 승격·강등 없음)`,
+    `- 이관 가설 ${hypN}건(${rows.map((r) => r.code).join('·')}) · 증거 ${evN}건(증거 칸 1개 = 1건, '기록 예정' 제외)`,
+    `- 상태 매핑: 검증 중→testing · 가설→hypothesis · 사용 중→rule(걸러내기 군령, citable=false) (원문 라벨은 original_status 보존 — 임의 승격·강등 없음)`,
     `- 판정식 등록(시세 측정 가능만): ${Object.keys(JUDGE_EXPRS).join(', ')} — 나머지는 비움(논공행상 군주 판정)`,
-    `- 원본 refs/research/patterns.md 는 수정하지 않음(읽기 전용)`,
+    `- 원본 ${srcPath} 는 수정하지 않음(읽기 전용)`,
   ];
   fs.writeFileSync(path.join(dir, 'migration_report.md'), L.join('\n') + '\n', 'utf8');
 

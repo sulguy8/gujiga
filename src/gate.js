@@ -257,7 +257,8 @@ async function runChecks(draft, env, api, opts) {
   // ⑦-보강(TSK-020 / REQ-023): 인용 가설 '최고 등급' 기준 병력 상한 —
   //   검증됨=관직 한도 전부 / 검증 중=절반(버림) / 가설=정찰대 10명 고정(승상 재량도 동일).
   //   제출 시점의 장부 등급을 읽는다. 매도는 미적용(위에서 이미 반환).
-  {
+  //   실전에만 적용(2026-11-26 군주 결정) — 모의 세력전은 미적용(근거 가설 ID 필수는 ②에서 모의도 유지).
+  if (env === 'real') {
     const ids = draft.hypothesis_ids || [];
     const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
     const rankOf = { verified: 3, testing: 2, hypothesis: 1 };

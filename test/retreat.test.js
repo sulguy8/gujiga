@@ -98,8 +98,9 @@ async function bootGate() {
     { id: 'HYP-R', code: 'D1', category: 'D', statement: 'r', status: 'rule', citable: false, evidence_count: 0, trade_count: 0, reference_only: true, created_at: 'x' },
     { id: 'HYP-T', code: 'T', category: 'A', statement: 't', status: 'testing', citable: true, evidence_count: 5, trade_count: 1, reference_only: true, created_at: 'x' },
   ] }, { dataDir: dir });
+  state.write('watchlist', [{ symbol: '005930', status: 'ready' }], { dataDir: dir });
   const srv = await fakeKis();
-  const opts = { dataDir: dir, keysPath, baseUrls: { mock: srv.url, real: srv.url }, gapMs: 5, fillPollMs: 10, fillPollMax: 30, now: '2026-11-25T09:30:00+09:00' };
+  const opts = { dataDir: dir, keysPath, baseUrls: { mock: srv.url, real: srv.url }, gapMs: 5, fillPollMs: 10, fillPollMax: 30, now: '2026-11-25T09:30:00+09:00', realOrderPolicy: { human: true } };
   return { dir, srv, opts };
 }
 function buyDraft(troops, ids) {
@@ -116,9 +117,11 @@ test('보완: gate — rule만 인용 no_rationale·rule+검증 중 혼합은 �
   try {
     const only = await gate.submit(buyDraft(5, ['HYP-R']), s.opts);
     assert.equal(only.reason, 'no_rationale', 'rule만 인용 거부');
-    // 혼합: 근거는 testing — 등급도 testing 기준(현령 10명)
-    assert.equal((await gate.submit(buyDraft(10, ['HYP-R', 'HYP-T']), s.opts)).ok, true, '혼합 10명 통과');
-    assert.equal((await gate.submit(buyDraft(11, ['HYP-R', 'HYP-T']), s.opts)).reason, 'grade_cap', 'rule은 등급 계산 제외');
+    // 혼합: 근거는 testing — 등급도 testing 기준(현령 10명).
+    // 등급 상한은 실전 전용(2026-11-26 군주 결정)이라 실전 초안으로 검증.
+    const realDraft = (troops, ids) => Object.assign(buyDraft(troops, ids), { account_type: 'real', nation: undefined });
+    assert.equal((await gate.submit(realDraft(10, ['HYP-R', 'HYP-T']), s.opts)).ok, true, '혼합 10명 통과');
+    assert.equal((await gate.submit(realDraft(11, ['HYP-R', 'HYP-T']), s.opts)).reason, 'grade_cap', 'rule은 등급 계산 제외');
   } finally {
     await s.srv.close(); rm(s.dir);
   }
