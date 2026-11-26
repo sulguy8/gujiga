@@ -21,13 +21,29 @@ try {
   if ($r.StatusCode -eq 200) { $gate = "200 OK" }
 } catch {}
 
-# 2. 프로세스 수(관문·그림자 각각)
-$gateProcs = 0; $shadowProcs = 0
+# 1-2. 현황판 응답(62900 — config\web.json)
+$dashPort = 62900
+$webCfgPath = Join-Path $repo "config\web.json"
+if (Test-Path $webCfgPath) {
+  try {
+    $webCfg = Get-Content $webCfgPath -Raw | ConvertFrom-Json
+    if ($null -ne $webCfg.port) { $dashPort = $webCfg.port }
+  } catch {}
+}
+$dash = "응답 없음"
+try {
+  $r2 = Invoke-WebRequest -Uri "http://127.0.0.1:$dashPort/" -UseBasicParsing -TimeoutSec 2
+  if ($r2.StatusCode -eq 200) { $dash = "200 OK" }
+} catch {}
+
+# 2. 프로세스 수(관문·그림자·현황판 각각)
+$gateProcs = 0; $shadowProcs = 0; $dashProcs = 0
 try {
   $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction Stop
   foreach ($p in $procs) {
     if ($p.CommandLine -match 'run-gatekeeper\.js') { $gateProcs++ }
     if ($p.CommandLine -match 'run-shadow\.js') { $shadowProcs++ }
+    if ($p.CommandLine -match 'run-dashboard\.js') { $dashProcs++ }
   }
 } catch {}
 
@@ -46,6 +62,7 @@ if (Test-Path $logDir) {
 }
 
 Write-Host "관문(127.0.0.1:$gatePort /ping) : $gate"
-Write-Host "프로세스 : 관문 $gateProcs 개 · 그림자 $shadowProcs 개"
+Write-Host "현황판(127.0.0.1:$dashPort /) : $dash"
+Write-Host "프로세스 : 관문 $gateProcs 개 · 그림자 $shadowProcs 개 · 현황판 $dashProcs 개"
 Write-Host "마지막 그림자 회차 : $lastJob"
 Write-Host "참고: ping 200은 생존만 - 정상 확인은 관문 경유 모의 잔고 조회까지(군사 루틴이 확인)"

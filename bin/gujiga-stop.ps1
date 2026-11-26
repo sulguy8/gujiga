@@ -1,7 +1,7 @@
-# 기동 종료 (지령 006) — 관문·그림자 둘 다 내린다.
+# 기동 종료 (지령 006) — 관문·그림자·현황판 셋 다 내린다.
 # 실행: powershell -ExecutionPolicy Bypass -File C:\workspace\gujiga\bin\gujiga-stop.ps1
 
-$targets = @('run-gatekeeper.js', 'run-shadow.js')
+$targets = @('run-gatekeeper.js', 'run-shadow.js', 'run-dashboard.js')
 $stopped = 0
 foreach ($t in $targets) {
   $procs = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
@@ -12,4 +12,4 @@ foreach ($t in $targets) {
     $stopped++
   }
 }
-if ($stopped -eq 0) { Write-Host "떠 있는 관문·그림자 없음" } else { Write-Host "완료: $stopped 개 종료" }
+if ($stopped -eq 0) { Write-Host "떠 있는 관문·그림자·현황판 없음" } else { Write-Host "완료: $stopped 개 종료" }
