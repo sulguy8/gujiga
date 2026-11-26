@@ -166,6 +166,7 @@ async function morningCouncil(opts) {
     const voices = res.ok && res.data && Array.isArray(res.data.council_voices) ? res.data.council_voices : null;
     councilResult = await council.runCouncil(agendas, {
       dataDir: opts.dataDir,
+      aiBudgetExhausted: res.reason === 'daily_cap', // 상한 소진은 그 사유로 기록(사후 분석용)
       aiCall: () => JSON.stringify(voices), // null이면 파싱 후 비배열 — 전원 폴백
     });
   }
@@ -256,7 +257,11 @@ async function insight(decision, strategistOpts, opts) {
   const res = strategist.call('insight', { data, councilRequested: agendas.length > 0 }, strategistOpts);
   if (agendas.length > 0) {
     const voices = res.ok && res.data && Array.isArray(res.data.council_voices) ? res.data.council_voices : null;
-    await council.runCouncil(agendas, { dataDir: opts.dataDir, aiCall: () => JSON.stringify(voices) });
+    await council.runCouncil(agendas, {
+      dataDir: opts.dataDir,
+      aiBudgetExhausted: res.reason === 'daily_cap',
+      aiCall: () => JSON.stringify(voices),
+    });
   }
   if (!res.ok || !res.data) return null; // degrade — 결정은 숫자만으로 가능(REQ-019 AC4)
 
@@ -271,7 +276,9 @@ async function insight(decision, strategistOpts, opts) {
     logGunshi('format_invalid', 'insight', { decision_type: decision.type }, strategistOpts);
     return null;
   }
-  const check = verifyNumbers(JSON.stringify(d), decision.data);
+  // 숫자 검증은 통찰 고유 필드만 — 편승된 council_voices의 자유 텍스트 숫자로
+  // 통찰 전체가 버려지는 것을 막는다(군사 지적 2026-11-26. voices는 위에서 이미 기록됨).
+  const check = verifyNumbers(JSON.stringify({ anecdotes: d.anecdotes, options: d.options, recommend: d.recommend, note: d.note }), decision.data);
   if (!check.ok) {
     logGunshi('number_mismatch', 'insight', { bad: check.bad }, strategistOpts);
     return null;

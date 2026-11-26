@@ -35,6 +35,7 @@ const benchmark = require('./benchmark');
 const retreat = require('./retreat');
 const backup = require('./backup');
 const nation = require('./nation');
+const councilMod = require('./council');
 const councilScore = require('./council_score');
 
 const JOBS = [
@@ -624,23 +625,24 @@ async function runOnce(opts) {
           body: `${e.symbol} ${e.condition} 현재가 ${e.price}`,
           fields: { symbol: e.symbol, condition: e.condition, price: e.price },
         }));
-        // 장중 책사단(지령 013 2항): 척후 [액션 필요] 회차의 insight 호출에 편승(척후 몫 6회 안 — 별도 회차 0)
+        // 장중 책사단(지령 013 2항): 척후 [액션 필요] 회차의 insight 호출에 편승(척후 몫 6회 안 — 별도 회차 0).
+        // 하루 1심: 아침 군의에서 이미 기록된 안건이면 싣지 않는다(출력 낭비 방지 — 군사 지적 2026-11-26).
         pending.push((async () => {
-          const dist = e.line != null ? Math.round(((e.price - e.line) / e.line) * 1000) / 10 : undefined;
-          let bars;
-          try {
-            bars = opts.providers.dailyBars ? await opts.providers.dailyBars(e.symbol) : undefined;
-          } catch (err) { bars = undefined; }
+          const agendaId = `AG-${date}-${e.symbol}-hold`;
+          const already = councilMod.readVerdicts(opts).some((r) => !r.type && r.agenda_id === agendaId);
+          let agendas = [];
+          if (!already) {
+            const dist = e.line != null ? Math.round(((e.price - e.line) / e.line) * 1000) / 10 : undefined;
+            let bars;
+            try {
+              bars = opts.providers.dailyBars ? await opts.providers.dailyBars(e.symbol) : undefined;
+            } catch (err) { bars = undefined; }
+            agendas = [{ id: agendaId, date, ticker: e.symbol, agenda_type: 'hold', inputs: { stopDistPct: dist, bars } }];
+          }
           return gunshi.insight(
             { type: 'judgment_needed', data: { symbol: e.symbol, price: e.price, line: e.line } },
             opts.strategistOpts,
-            {
-              dataDir: opts.dataDir,
-              councilAgendas: [{
-                id: `AG-${date}-${e.symbol}-hold`, date, ticker: e.symbol, agenda_type: 'hold',
-                inputs: { stopDistPct: dist, bars },
-              }],
-            }
+            { dataDir: opts.dataDir, councilAgendas: agendas }
           );
         })());
         if (e.condition === 'stop_approach' && e.line != null && e.price <= e.line) {

@@ -27,6 +27,14 @@ function normConf(v) {
   return Number.isInteger(v) && v >= 1 && v <= 5 ? v : 1;
 }
 
+// council_time "YYYY-MM-DD HH:MM …" → ISO. 파싱 실패 시 09:06 근사(첫 표본 관례).
+function recordTime(obj, date) {
+  const m = String(obj.council_time || '').match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})/);
+  const [d, t] = m ? [m[1], m[2]] : [date, '09:06'];
+  return new Date(`${d}T${t}:00+09:00`).toISOString();
+}
+
+// opts.dryRun: 본장부를 기준으로 '실제 이관될 건수'만 집계하고 쓰기는 생략(멱등 미리보기).
 function migrateCouncilReports(reportsDir, opts) {
   const out = { migrated: 0, skipped: 0, deferred: [] };
   if (!fs.existsSync(reportsDir)) return out;
@@ -68,23 +76,28 @@ function migrateCouncilReports(reportsDir, opts) {
       }
       const agendaId = `ASIDE-${date}-${ticker}`;
       if (haveKey.has(`${agendaId}|${c.advisor}`)) continue; // 멱등 — 이미 이관됨
+      const agendaType = /진입/.test(String(c.topic)) ? 'entry' : 'hold';
       rows.push({
         id: `CV-${date.replace(/-/g, '')}-${String(++seq).padStart(4, '0')}`,
         date, agenda_id: agendaId, ticker, name: null,
-        agenda_type: /진입/.test(String(c.topic)) ? 'entry' : 'hold',
-        advisor: c.advisor, stance, confidence: normConf(c.conf),
+        agenda_type: agendaType,
+        advisor: c.advisor,
+        stance: council.normalizeStance(stance, agendaType), // entry의 '회군' → '반대'(DAT-014 제약)
+        confidence: normConf(c.conf),
         rationale: `시범 기록 이관(Aside reports) — ${c.topic}`,
-        source: noInfo ? 'fallback' : (RULE_ADVISORS.has(c.advisor) ? 'rule' : 'ai'),
+        source: c.advisor === '제갈량' ? 'synthesis'
+          : noInfo ? 'fallback'
+            : (RULE_ADVISORS.has(c.advisor) ? 'rule' : 'ai'),
         rank_at_time: { rank: 'jongsa', weight: 1 },
         score_result: 'pending', rel_return: null, scored_at: null, disagreement: null,
-        created_at: new Date(`${date}T09:06:00+09:00`).toISOString(),
+        created_at: recordTime(obj, date),
         migrated: true,
       });
       haveKey.add(`${agendaId}|${c.advisor}`);
       out.migrated++;
     }
   }
-  council.appendLines(rows, opts);
+  if (!opts.dryRun) council.appendLines(rows, opts);
   return out;
 }
 

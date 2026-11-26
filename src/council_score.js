@@ -97,7 +97,8 @@ const RANKS = [
   { rank: 'junglangjang', weight: 3, label: '군사중랑장' },
 ];
 function pct(x) { return Math.round(x * 1000) / 10; }
-function recomputeRanks(opts) {
+// 순수 계산(쓰기 없음) — 화면(읽기 전용 현황판)이 캐시 결손 시에도 안전하게 쓴다.
+function computeRanks(opts) {
   const rows = council.readVerdicts(opts);
   const byId = new Map(rows.filter((r) => !r.type).map((r) => [r.id, r]));
   const perAdvisor = {};
@@ -153,6 +154,11 @@ function recomputeRanks(opts) {
       updated_at: lastAt, // 마지막 판정 시점(결정적 — 재계산 멱등 유지)
     });
   }
+  return outRanks;
+}
+// 계산 + 캐시 저장(그림자 15:45 배치용)
+function recomputeRanks(opts) {
+  const outRanks = computeRanks(opts);
   council.writeRanks(outRanks, opts); // <dataDir>\council\ranks.json — DAT-015 정본 경로(파생 캐시)
   return outRanks;
 }
@@ -168,4 +174,4 @@ function disagreementWarning(opts) {
   return { warn: avg < DISAGREE_WARN_PCT, avg, count: recent.length };
 }
 
-module.exports = { scoreVerdicts, recomputeRanks, disagreementWarning, addTradingDays };
+module.exports = { scoreVerdicts, computeRanks, recomputeRanks, disagreementWarning, addTradingDays };

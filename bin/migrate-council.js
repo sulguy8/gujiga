@@ -17,13 +17,10 @@ const dir = args.find((a) => !a.startsWith('--')) ||
   path.join(os.homedir(), '.aside', 'u', '1', 'trading', 'reports');
 
 if (dryRun) {
-  // 쓰기 없이 집계만: 임시 폴더를 dataDir로 써서 본장부를 건드리지 않는다
-  const fs = require('node:fs');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gujiga-council-dry-'));
-  const r = migrate.migrateCouncilReports(dir, { dataDir: tmp });
+  // 본장부를 기준으로 '실제 이관될 건수'만 집계(쓰기 0) — 멱등 미리보기(군사 지적 2026-11-26)
+  const r = migrate.migrateCouncilReports(dir, { dryRun: true });
   console.log(`[dry-run] 이관 대상 ${r.migrated}건 · 건너뜀 ${r.skipped}파일 · 보류 ${r.deferred.length}건`);
   for (const d of r.deferred) console.log(`  보류: ${d.file} ${d.advisor || ''} — ${d.reason}`);
-  fs.rmSync(tmp, { recursive: true, force: true });
   process.exit(0);
 }
 
