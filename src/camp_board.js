@@ -14,6 +14,7 @@ const paths = require('./paths');
 const ranks = require('./ranks');
 const generalRank = require('./general_rank');
 const captives = require('./captives');
+const symbols = require('./symbols');
 
 // 원장 전체 행 읽기(없으면 빈 배열)
 function readLedgerRows(dataDir, name) {
@@ -93,27 +94,47 @@ function forcesCard(opts) {
   }
 }
 
-// 출병 중인 성 표: positions 상태 파일(open 행). 현재가는 아직 미연결 — 거리 표시는 '없음'.
+// 그림자가 남긴 최근 시세 캐시(지령 015 — 읽기 전용). 없으면 null.
+function quotesCache(opts) {
+  try {
+    const f = path.join(paths.resolveDataDir(opts), 'market_cache', 'quotes_latest.json');
+    if (!fs.existsSync(f)) return null;
+    const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+    return c && c.quotes ? c : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 출병 중인 성 표: positions 상태 파일(open 행).
+// 현재가는 그림자 시세 캐시(읽기 전용)로 — 평가·성벽까지 거리·기준 시각을 함께 준다.
 function castles(opts) {
   try {
     const list = state.read('positions', opts);
     if (!Array.isArray(list)) return { ok: true, rows: [], none: true };
+    const cache = quotesCache(opts);
     const open = list.filter((p) => p.status === 'open');
     return {
       ok: true,
       none: false,
+      quoteAt: cache ? cache.updated_at : null, // 기준 시각(없으면 시세 미연결)
       rows: open.map((p) => {
         const amount = p.qty * p.avg_price;
+        const price = cache && typeof cache.quotes[p.symbol] === 'number' ? cache.quotes[p.symbol] : null;
         return {
           symbol: p.symbol,
-          name: p.name || p.symbol,
+          name: p.name || symbols.nameOf(p.symbol, opts) || p.symbol,
           nation: p.nation || null,
           qty: p.qty,
           amount,
           troops: troopsOf(amount),
           stopPrice: p.stop_price,
-          // 현재가 공급자(TSK-003) 미연결 — 성벽까지 거리는 '없음'
-          stopDistance: null,
+          price,
+          evalAmount: price != null ? price * p.qty : null,
+          returnPct: price != null && p.avg_price > 0 ? Math.round(((price / p.avg_price) - 1) * 1000) / 10 : null,
+          stopDistance: price != null && p.stop_price != null && p.stop_price > 0
+            ? Math.round(((price - p.stop_price) / p.stop_price) * 1000) / 10
+            : null,
         };
       }),
     };
@@ -156,4 +177,4 @@ function gather(opts) {
   };
 }
 
-module.exports = { gather, troopsOf };
+module.exports = { gather, troopsOf, quotesCache };
