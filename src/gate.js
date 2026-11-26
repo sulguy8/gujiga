@@ -119,11 +119,24 @@ async function runChecks(draft, env, api, opts) {
   const invalid = orderDraft.validate(draft);
   if (invalid) return { reason: `draft_invalid_${invalid}`, detail: { missing: invalid } };
   if (isBuy) {
-    const ids = draft.hypothesis_ids;
+    let ids = draft.hypothesis_ids;
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > 3) {
       return { reason: 'no_rationale', detail: { ids: ids || null, note: '매수 출사표는 근거 가설 ID 1~3개 필수' } };
     }
     const bookItems = (state.read('hypothesis_book', opts) || { items: [] }).items;
+    // 별칭 정규화(지령 014): 'B7'·'b7'처럼 접두어 없이 와도 장부에 'HYP-B7'이 있으면 그걸로.
+    // 정확 일치 우선 → 대소문자 정리 → 'HYP-' 접두어. 정규화 결과는 출사표·로그에 그대로 기록된다.
+    ids = ids.map((hid) => {
+      const t = String(hid == null ? '' : hid).trim();
+      if (bookItems.some((x) => x.id === t)) return t;
+      const tU = t.toUpperCase();
+      if (bookItems.some((x) => x.id === tU)) return tU;
+      const alias = `HYP-${tU}`;
+      if (bookItems.some((x) => x.id === alias)) return alias;
+      return t; // 장부에 없음 — 아래에서 원문 그대로 사유에 담아 차단
+    });
+    ids = [...new Set(ids)]; // 별칭·원형을 같이 보내도 중복 1건으로(장부 가독성 — 군사 지적)
+    draft.hypothesis_ids = ids;
     let citableCount = 0;
     for (const hid of ids) {
       const h = bookItems.find((x) => x.id === hid);

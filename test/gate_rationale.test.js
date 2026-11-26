@@ -215,3 +215,32 @@ test('경계: 인용 가설이 폐기로 바뀐 뒤 제출 → no_rationale', as
     await down(s);
   }
 });
+
+// ===== 지령 014: 근거 ID 별칭 정규화 + 차단 사유 상세 =====
+function lastOrderRow(dir) {
+  const d = paths.ledgerDir(dir, 'order_log');
+  const rows = fs.readdirSync(d).flatMap((f) => fs.readFileSync(path.join(d, f), 'utf8').split('\n').filter(Boolean).map(JSON.parse));
+  return rows[rows.length - 1];
+}
+
+test('지령014: 접두어 없는 ID·소문자 → 정규화 통과·기록, 없는 ID → note 포함 차단', async () => {
+  const s = await boot();
+  try {
+    // 'H' → 'HYP-H' (모의 매수 — 등급 상한 미적용이라 통과)
+    const r1 = await gate.submit(draft(10, ['H']), s.opts);
+    assert.equal(r1.ok, true, '별칭 통과');
+    assert.deepEqual(lastOrderRow(s.dir).hypothesis_ids, ['HYP-H'], '정규화 결과가 기록에 남음');
+    // 소문자 'hyp-v' → 'HYP-V'
+    const r2 = await gate.submit(draft(10, ['hyp-v']), s.opts);
+    assert.equal(r2.ok, true, '대소문자 정리 통과');
+    assert.deepEqual(lastOrderRow(s.dir).hypothesis_ids, ['HYP-V']);
+    // 정확 일치 그대로
+    assert.equal((await gate.submit(draft(10, ['HYP-V']), s.opts)).ok, true);
+    // 없는 ID → 차단 + note
+    const r4 = await gate.submit(draft(10, ['B99']), s.opts);
+    assert.equal(r4.reason, 'no_rationale');
+    assert.match(r4.detail.note, /장부에 없는 가설: B99/, '원인 note');
+  } finally {
+    await down(s);
+  }
+});
