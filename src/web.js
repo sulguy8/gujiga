@@ -23,6 +23,7 @@ const paths2 = require('./paths');
 const council = require('./council');
 const councilScore = require('./council_score');
 const symbols = require('./symbols');
+const terms = require('./ui_terms');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '..', 'config', 'web.json');
 const LOOPBACK = '127.0.0.1';
@@ -50,33 +51,43 @@ function won(n) {
   return typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '없음';
 }
 
-// ---- 화면 렌더(서버 사이드, 외부 리소스 0) ----
-function render(data, opts2) {
+// ---- 화면 렌더(서버 사이드, 외부 리소스 0 — 지령 016 '주군의 군영': 카드·칩·게이지) ----
+// NATION_KO는 아래(세력전 렌더부)의 기존 선언을 공용으로 쓴다.
+const NATION_COLOR = { chok: '#2f8f5b', wi: '#3b6fb6', o: '#c0453a' }; // 촉 초록·위 파랑·오 빨강(지령 016)
+
+function render(data, opts2, extras) {
+  extras = extras || {};
   const H = [];
   H.push('<!doctype html><html lang="ko"><head><meta charset="utf-8">');
   H.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
-  H.push('<title>군영 현황판</title>');
+  H.push(`<title>${terms.TERMS.home_title}</title>`);
   H.push('<style>');
-  H.push('body{font-family:system-ui,Malgun Gothic,sans-serif;margin:0;background:#f4f1ea;color:#222}');
-  H.push('header{background:#3b2f2f;color:#f4f1ea;padding:12px 16px;font-size:18px;font-weight:bold}');
-  H.push('main{max-width:720px;margin:0 auto;padding:12px}');
-  H.push('section{background:#fff;border:1px solid #d8d2c4;border-radius:8px;padding:12px 14px;margin:10px 0}');
-  H.push('h2{font-size:15px;margin:0 0 8px;border-bottom:1px solid #e5e0d4;padding-bottom:6px}');
-  H.push('table{width:100%;border-collapse:collapse;font-size:14px}');
-  H.push('th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #eee}');
-  H.push('.band-red{background:#b3261e;color:#fff;padding:8px 16px;font-weight:bold}');
-  H.push('.band-amber{background:#9a6b00;color:#fff;padding:8px 16px}');
+  H.push(':root{--fg:#2b2420;--mutefg:#7a6f66;--mute:#e6dfd6;--card:#fffdf9;--border:#e0d8cd;--ok:#2f8f5b;--bad:#c0453a;--r:10px}');
+  H.push('body{font:14px/1.5 system-ui,Malgun Gothic,sans-serif;margin:0;background:#f4f0ea;color:var(--fg)}');
+  H.push('main{max-width:760px;margin:0 auto;padding:16px;display:grid;gap:22px}');
+  H.push('.h1{font-size:24px;font-weight:600}.m{color:var(--mutefg);font-size:12px}');
+  H.push('.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{background:var(--card);border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-size:12px}.chip b{font-weight:600}');
+  H.push('.sec{display:grid;gap:10px}.st{font-size:12px;color:var(--mutefg);border-bottom:1px solid var(--border);padding-bottom:6px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px}');
+  H.push('.nations{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}');
+  H.push('.n{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;display:grid;gap:8px}.n .nm{font-size:18px;font-weight:600}.n .nm small{font-size:11px;color:var(--mutefg);font-weight:400;margin-left:6px}');
+  H.push('.big{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}');
+  H.push('.bar{height:6px;border-radius:3px;background:var(--mute);overflow:hidden}.bar i{display:block;height:100%}');
+  H.push('.line{font-size:12px;color:var(--mutefg)}');
+  H.push('.castle{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;display:grid;gap:8px}');
+  H.push('.gauge{position:relative;height:30px}.track{position:absolute;top:13px;left:0;right:0;height:4px;background:var(--mute);border-radius:2px}');
+  H.push('.mk{position:absolute;top:0;font-size:10px;color:var(--mutefg);transform:translateX(-50%);white-space:nowrap}.dot{position:absolute;top:9px;width:12px;height:12px;border-radius:50%;background:#3b6fb6;transform:translateX(-50%)}');
+  H.push('.rows{display:grid;gap:6px}.row{display:flex;justify-content:space-between;gap:12px;font-size:13px;flex-wrap:wrap}');
+  H.push('.pos{color:var(--ok)}.neg{color:var(--bad)}');
+  H.push('.votes{display:flex;gap:4px;flex-wrap:wrap}.v{font-size:11px;padding:2px 8px;border-radius:999px;background:#f1ebe3}.v.go{background:#cde7d8}.v.no{background:#eecfcb}');
+  H.push('.band-red{background:#b3261e;color:#fff;padding:8px 16px;font-weight:bold}.band-amber{background:#9a6b00;color:#fff;padding:8px 16px}');
   H.push('.badge{display:inline-block;background:#1d5c2e;color:#fff;border-radius:4px;padding:2px 8px;font-size:12px;margin-left:8px}');
-  H.push('.muted{color:#777}.num{font-variant-numeric:tabular-nums}');
-  H.push('.ration-warn{color:#9a6b00;font-weight:bold}');
+  H.push('.muted{color:var(--mutefg)}.num{font-variant-numeric:tabular-nums}.ration-warn{color:#9a6b00;font-weight:bold}');
   H.push('</style></head><body>');
-  H.push(`<header>군영 현황판 <span class="muted" style="font-size:12px;color:#cfc8b8">${esc(data.today)}</span></header>`);
 
-  // 띠: 복수 출병 금지(포로 발생일)
+  // 띠: 복수 출병 금지(포로 발생일) — 보안·경고 문구는 줄이지 않는다
   if (data.revengeBan) {
     H.push('<div class="band-red">오늘은 복수 출병 금지 — 포로가 발생한 날에는 신규 출병을 하지 않는다(군령)</div>');
   }
-  // 위반 띠
   const rk = data.rank;
   if (rk.ok && rk.lastViolation) {
     H.push(`<div class="band-amber">군령 위반 기록: ${esc(rk.lastViolation.violation_date)} ${esc(rk.lastViolation.code)} — 승진 카운트 초기화됨</div>`);
@@ -84,78 +95,130 @@ function render(data, opts2) {
 
   H.push('<main>');
 
-  // 1) 관직 카드
-  H.push('<section><h2>관직</h2>');
-  if (!rk.ok) {
-    H.push('<p>집계 실패</p>');
-  } else {
-    H.push(`<p><b>${esc(rk.label)}</b>${rk.eligible ? '<span class="badge">승진 가능 — 확정은 군주 수락</span>' : ''}</p>`);
-    H.push(`<p class="num">한 성 최대 병력 ${won(rk.perStockLimitWon)}원 · 동시 ${rk.concurrentMax == null ? '재량' : rk.concurrentMax + '성'}</p>`);
-    H.push(`<p class="num muted">승진 진행 — 출병 ${rk.sortie}/5 · 무위반 ${rk.clean}주 · 주간 복기 ${rk.review}/4주 · 위반 ${rk.violationCount}건</p>`);
-  }
-  H.push('</section>');
+  // 1) 머리: 날짜·벼슬·다음 벼슬까지
+  H.push('<div>');
+  H.push(`<div class="h1">${terms.TERMS.home_title}</div>`);
+  H.push(`<div class="m">${esc(data.today)}${rk.ok ? ` · ${esc(terms.TERMS.rank_progress(rk.label, rk.sortie, rk.nextLabel))} · 한 성 최대 ${won(rk.perStockLimitWon)}원 · 동시 ${rk.concurrentMax == null ? '재량' : rk.concurrentMax + '성'}` : ''}${rk.ok && rk.eligible ? '<span class="badge">승진 가능 — 확정은 군주 수락</span>' : ''}</div>`);
+  H.push('</div>');
 
-  // 2) 병력 요약
-  const fc = data.forces;
-  H.push('<section><h2>병력 요약</h2>');
-  if (!fc.ok) {
-    H.push('<p>집계 실패</p>');
-  } else if (fc.empty) {
-    H.push('<p class="muted">계좌 스냅샷 없음 — 병력 집계는 08:30 스냅샷 이후 표시된다</p>');
+  // 2) 상태 칩: 천하 정세·봉화·코스피·관문
+  const mk2 = data.market;
+  H.push('<div class="chips">');
+  if (mk2) {
+    H.push(`<span class="chip">${esc(terms.weatherTerm(mk2.weather))}</span>`);
+    if (mk2.signalsOn != null) H.push(`<span class="chip">${esc(terms.TERMS.beacon(mk2.signalsOn))} 켜짐</span>`);
+    if (mk2.kospiClose != null) H.push(`<span class="chip">코스피 <b>${won(mk2.kospiClose)}</b></span>`);
   } else {
-    H.push(`<p class="num">총 병력 ${fc.totalTroops}명 (총평가 ${won(fc.totalEval)}원, ${esc(fc.date)} ${fc.accountType === 'real' ? '실전' : '모의'})</p>`);
-    const cls = fc.rationWarn ? ' class="ration-warn"' : '';
-    H.push(`<p${cls}>군량(현금) ${won(fc.cash)}원 · 비중 ${fc.cashRatioPct == null ? '없음' : fc.cashRatioPct + '%'}${fc.rationWarn ? ' — 군량 30% 경계 접근' : ''}</p>`);
+    H.push(`<span class="chip">${esc(terms.TERMS.no_snapshot)}</span>`);
   }
-  H.push('</section>');
+  if (extras.gateOpen != null) H.push(`<span class="chip">${extras.gateOpen ? esc(terms.TERMS.gate_open) : esc(terms.TERMS.gate_closed)}</span>`);
+  H.push('</div>');
 
-  // 3) 출병 중인 성
+  // 3) 삼국 정립(나라 카드 3장) — 데이터는 extras.nations(렌더 호출부에서 computeLedger)
+  if (extras.nations) {
+    H.push(`<div class="sec"><div class="st"><span>${terms.TERMS.nations_title}</span><span>${terms.TERMS.weekly_merit}${extras.weeklyTop ? `: ${esc(extras.weeklyTop)} 1위` : ''}</span></div><div class="nations">`);
+    for (const nkey of ['chok', 'wi', 'o']) {
+      const L = extras.nations[nkey];
+      if (!L) continue;
+      const pnl = Math.round((L.cash + L.position_value) - L.allocated);
+      const usedPct = L.allocated > 0 ? Math.round(((L.allocated - L.cash) / L.allocated) * 100) : 0;
+      const castleCount = (data.castles.ok ? data.castles.rows : []).filter((r) => r.nation === nkey).length;
+      H.push(`<div class="n"><div class="nm" style="color:${NATION_COLOR[nkey]}">${NATION_KO[nkey]}<small>${esc(extras.nationTag && extras.nationTag[nkey] || '')}</small></div>` +
+        `<div class="big ${pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : ''}">${pnl > 0 ? '+' : ''}${won(pnl)}원</div>` +
+        `<div class="bar"><i style="width:${usedPct}%;background:${NATION_COLOR[nkey]}"></i></div>` +
+        `<div class="line">군량 ${won(L.cash)}원 · 점령 성 ${castleCount}/2${extras.nationNote && extras.nationNote[nkey] ? ` · ${esc(extras.nationNote[nkey])}` : ''}</div></div>`);
+    }
+    H.push('</div></div>');
+  }
+
+  // 4) 점령 중인 성: 게이지(성벽 ─ 입성 ─ 깃발, 현재가 점)
   const cs = data.castles;
-  H.push('<section><h2>출병 중인 성</h2>');
+  H.push(`<div class="sec"><div class="st"><span>${terms.TERMS.castles_title}</span><span>${terms.TERMS.wall} = 손절선 · ${terms.TERMS.flag} = 목표</span></div>`);
   if (!cs.ok) {
     H.push('<p>집계 실패</p>');
   } else if (cs.none || cs.rows.length === 0) {
-    H.push('<p class="muted">전군 주둔 중 — 출병한 성 없음</p>');
+    H.push('<p class="muted">전군 주둔 중 — 점령한 성 없음</p>');
   } else {
-    H.push('<table><tr><th>성(종목)</th><th>병사</th><th>투입</th><th>평가</th><th>수익률</th><th>성벽(손절선)</th><th>성벽까지</th></tr>');
     for (const r of cs.rows) {
-      const nm = r.name && r.name !== r.symbol ? `${esc(r.name)}(${esc(r.symbol)})` : esc(r.symbol);
-      H.push(`<tr><td>${nm}${r.nation ? ` <span class="muted">${esc(r.nation)}</span>` : ''}</td>` +
-        `<td class="num">${r.troops}명</td><td class="num">${won(r.amount)}원</td>` +
-        `<td class="num">${r.evalAmount != null ? won(r.evalAmount) + '원' : '-'}</td>` +
-        `<td class="num">${r.returnPct != null ? esc(String(r.returnPct)) + '%' : '-'}</td>` +
-        `<td class="num">${won(r.stopPrice)}원</td><td>${r.stopDistance == null ? '없음(시세 미연결)' : esc(String(r.stopDistance)) + '%'}</td></tr>`);
+      const nm = r.name && r.name !== r.symbol ? `${esc(r.name)}` : esc(r.symbol);
+      const natKo = r.nation ? `${NATION_KO[r.nation] || esc(r.nation)}군 · ` : '';
+      const hyp = (r.hypothesisIds || [])[0];
+      H.push('<div class="castle">');
+      H.push(`<div class="row"><span><b>${nm}</b> <span class="m">${natKo}${r.qty}주 · 병사 ${r.troops}명 · ${terms.TERMS.castle_enter} ${won(r.avgPrice)}원${hyp ? ` · 근거 ${esc(hyp.replace('HYP-', ''))}` : ''}</span></span>` +
+        `<span class="${r.returnPct > 0 ? 'pos' : r.returnPct < 0 ? 'neg' : ''}">${r.returnPct != null ? (r.returnPct > 0 ? '+' : '') + esc(String(r.returnPct)) + '%' : '-'}</span></div>`);
+      // 게이지: 성벽(0%) ~ 깃발(100%), 입성·현재가 위치 보간
+      if (r.stopPrice != null && r.targetPrice != null && r.targetPrice > r.stopPrice) {
+        const pct = (v) => Math.max(0, Math.min(100, Math.round(((v - r.stopPrice) / (r.targetPrice - r.stopPrice)) * 100)));
+        H.push(`<div class="gauge"><div class="track"></div>` +
+          `<span class="mk" style="left:0;transform:none">${terms.TERMS.wall} ${won(r.stopPrice)}</span>` +
+          `<span class="mk" style="left:${pct(r.avgPrice)}%">${terms.TERMS.castle_enter} ${won(r.avgPrice)}</span>` +
+          `<span class="mk" style="left:100%;transform:translateX(-100%)">${terms.TERMS.flag} ${won(r.targetPrice)}</span>` +
+          (r.price != null ? `<div class="dot" style="left:${pct(r.price)}%"></div>` : '') + '</div>');
+      }
+      let dday = r.deadline ? Math.ceil((new Date(`${r.deadline}T00:00:00`) - new Date(`${data.today}T00:00:00`)) / 86400000) : null;
+      if (dday != null && Number.isNaN(dday)) dday = null;
+      const ddayText = dday == null ? '' : dday >= 0 ? ` (D-${dday})` : ` (기한 경과 ${-dday}일)`;
+      // 성벽까지: 시안 규약 음수=여유. 뚫림(현재가 < 성벽)은 위험 표기로 분기(군사 지적 — 여유로 오독 방지)
+      const wallText = r.stopDistance == null
+        ? `${terms.TERMS.no_quotes}${cs.quoteAt ? `(마지막 ${esc(String(cs.quoteAt))})` : ''}`
+        : r.stopDistance >= 0
+          ? `-${esc(String(r.stopDistance))}% 여유`
+          : `<span class="neg"><b>뚫림 ${esc(String(-r.stopDistance))}% — 읍참마속(손절 규칙) 판정 필요</b></span>`;
+      H.push(`<div class="line">${terms.TERMS.wall}까지 ${wallText}` +
+        `${r.flagDistance != null ? ` · ${terms.TERMS.flag}까지 ${r.flagDistance > 0 ? '+' : ''}${esc(String(r.flagDistance))}%` : ''}` +
+        `${r.deadline ? ` · 퇴각 기한 ${esc(r.deadline)}${ddayText}` : ''}</div>`);
+      H.push('</div>');
     }
-    H.push('</table>');
     H.push(cs.quoteAt
-      ? `<p class="muted">시세 기준: ${esc(String(cs.quoteAt))} (그림자 최근 조회 — 실시간 아님)</p>`
-      : '<p class="muted">시세 캐시 없음 — 그림자 기동 후 생성</p>');
+      ? `<p class="m">시세 기준: ${esc(String(cs.quoteAt))} (그림자 최근 조회 — 실시간 아님)</p>`
+      : `<p class="m">${terms.TERMS.no_quotes} — 그림자 기동 후 연결</p>`);
   }
-  H.push('</section>');
+  H.push('</div>');
 
-  // 4) 포로·전공
-  const cp = data.captives;
-  H.push('<section><h2>포로·전공</h2>');
-  if (!cp.ok) {
-    H.push('<p>집계 실패</p>');
+  // 5) 오늘의 군막 회의: 안건별 7인 의견 칩 + 군주 결정
+  const cc = data.council;
+  H.push(`<div class="sec"><div class="st"><span>${terms.TERMS.council_today}</span><span><a href="/council">${terms.TERMS.council_title} 전체</a></span></div>`);
+  if (!cc || cc.none || cc.agendas.length === 0) {
+    H.push('<p class="muted">오늘 안건 없음 — 결정할 것이 있는 날에만 열린다</p>');
   } else {
+    H.push('<div class="rows">');
+    for (const a of cc.agendas) {
+      H.push(`<div class="row"><span>${esc(a.label)}</span><span class="m">${a.decision ? `주군 결정: ${esc(a.decision)}` : a.synthesis ? `제갈량: ${esc(a.synthesis)}` : ''}</span></div>`);
+      H.push('<div class="votes">' + a.votes.map((v) => {
+        const cls = v.stance === '출병' ? ' go' : (v.stance === '반대' || v.stance === '회군') ? ' no' : '';
+        return `<span class="v${cls}">${esc(v.advisor)} ${esc(v.stance)}</span>`;
+      }).join('') + '</div>');
+    }
+    H.push('</div>');
+  }
+  H.push('</div>');
+
+  // 6) 전리품과 포로(실전·모의) + 병력 요약 + 천하 대세 대비
+  const cp = data.captives;
+  const fc = data.forces;
+  H.push(`<div class="sec"><div class="st"><span>${terms.TERMS.loot_title}</span><span>${terms.TERMS.benchmark} 대비</span></div><div class="rows">`);
+  if (cp.ok) {
+    const allZero = ['real', 'paper'].every((k) => cp[k].captives === 0 && cp[k].lossOutstanding === 0 && cp[k].meritTotal === 0);
+    if (allZero) H.push(`<div class="row"><span class="muted">${terms.TERMS.no_judged} — 첫 회군(매도)부터 쌓인다</span></div>`);
     for (const [key, label] of [['real', '실전'], ['paper', '모의']]) {
       const s = cp[key];
-      H.push(`<p class="num">${label}: 포로 ${s.captives}명 · 구출까지 ${won(s.lossOutstanding)}원 · 누적 전공 ${won(s.meritTotal)}원</p>`);
+      H.push(`<div class="row"><span>${label} · 포로 ${s.captives}명 · 구출까지 ${won(s.lossOutstanding)}원</span><span class="num ${s.meritTotal > 0 ? 'pos' : s.meritTotal < 0 ? 'neg' : ''}">누적 전공 ${won(s.meritTotal)}원</span></div>`);
     }
   }
-  H.push('</section>');
-
-  // 비교 기준선 요약 1줄(TSK-022 — SCR-005 보강)
+  if (fc.ok && !fc.empty) {
+    const cls = fc.rationWarn ? ' class="ration-warn"' : '';
+    H.push(`<div class="row"><span${cls}>총 병력 ${fc.totalTroops}명 (${esc(fc.date)} ${fc.accountType === 'real' ? '실전' : '모의'}) · 군량 ${won(fc.cash)}원(${fc.cashRatioPct == null ? '-' : fc.cashRatioPct + '%'})${fc.rationWarn ? ' — 군량 30% 경계 접근' : ''}</span></div>`);
+  } else if (fc.ok && fc.empty) {
+    H.push(`<div class="row"><span class="muted">${terms.TERMS.no_snapshot}</span></div>`);
+  }
   try {
     const bs = benchmark.summary(opts2 || {});
     if (bs) {
-      H.push('<section><h2>천시 - 비교 기준선(KODEX 200)</h2>');
-      if (bs.warn4w) H.push('<p style="color:#b3261e"><b>경고: 4주 연속 초과수익 마이너스 - 지수 보유보다 못함</b></p>');
-      H.push(`<p class="num">우리 ${bs.ours.returnPct == null ? '없음' : bs.ours.returnPct + '%'} · 기준선 ${bs.bench.returnPct == null ? '없음' : bs.bench.returnPct + '%'} · 초과 ${bs.excessPp == null ? '없음' : bs.excessPp + '%p'} · 낙폭 ${bs.ours.mddPct}%/${bs.bench.mddPct}%${bs.missingDays ? ' · 결측 ' + bs.missingDays + '일' : ''}</p>`);
-      H.push('</section>');
+      if (bs.warn4w) H.push('<div class="row"><span class="neg"><b>경고: 4주 연속 초과수익 마이너스 - 지수 보유보다 못함</b></span></div>');
+      H.push(`<div class="row"><span class="num">우리 ${bs.ours.returnPct == null ? '-' : bs.ours.returnPct + '%'} · ${terms.TERMS.benchmark} ${bs.bench.returnPct == null ? '-' : bs.bench.returnPct + '%'} · 초과 ${bs.excessPp == null ? '-' : bs.excessPp + '%p'}${bs.missingDays ? ' · 결측 ' + bs.missingDays + '일' : ''}</span></div>`);
     }
   } catch (e) { /* 집계 실패 시 생략 */ }
+  H.push('</div></div>');
 
   // 입금 확인 대기 배지만(출사표 003) — 확정은 관문(62910)에서
   try {
@@ -172,13 +235,39 @@ function render(data, opts2) {
     }
   } catch (e) { /* 집계 실패 시 생략 */ }
 
-  // 출사표 실행 창(관문 62910 제공)으로 가는 링크만 — 현황판 자체는 계속 읽기 전용
-  H.push('<p><a href="/nations">세력전 대시보드 (촉·위·오)</a> · <a href="/council">책사단 의견판</a> · ' +
-    '<a href="/council/merit">책사단 공적판</a> · <a href="/hypotheses">병법서</a> · <a href="/merit">논공행상</a></p>');
-  H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">출사표 확인·실행 창 열기 (관문)</a></p>`);
-  H.push('<p class="muted" style="font-size:12px">읽기 전용 현황판 — 숫자는 장부 값 그대로. 참고용, 최종 결정은 본인.</p>');
+  // 옥새 찍는 곳(관문 62910 제공)으로 가는 링크만 — 이 화면 자체는 계속 읽기 전용
+  H.push(`<p><a href="/nations">${terms.TERMS.nations_title} (촉·위·오)</a> · <a href="/council">${terms.TERMS.council_title}</a> · ` +
+    `<a href="/council/merit">${terms.TERMS.merit_board}</a> · <a href="/hypotheses">병법서</a> · <a href="/merit">논공행상</a></p>`);
+  H.push(`<p><a href="http://127.0.0.1:${gatePort()}/drafts">${terms.TERMS.gate_exec} 열기 (관문 — 출사표 확인·실행)</a></p>`);
+  H.push(`<p class="m">읽기 전용 — 숫자는 장부 값 그대로. ${terms.TERMS.reference_note}.</p>`);
   H.push('</main></body></html>');
   return H.join('\n');
+}
+
+// 홈 부가 데이터(지령 016): 삼국 카드·이번 주 논공 1위·관문 열림 — 조회 전용(ping GET 1초)
+async function homeExtras(opts) {
+  const extras = {
+    nationTag: { chok: '정공법 · 규칙대로', wi: '매복 전문', o: '확인 후 돌격' },
+  };
+  try {
+    const qc = board.quotesCache(opts);
+    extras.nations = nation.computeLedger(opts, qc ? qc.quotes : undefined).ledgers;
+  } catch (e) { /* 세력 장부 없음 — 카드 생략 */ }
+  try {
+    const today = (opts && opts.today) || new Date().toISOString().slice(0, 10);
+    const w = nation.weeklyReport({ from: mondayOf(today), to: addDays(mondayOf(today), 4) }, opts);
+    const best = ['chok', 'wi', 'o'].map((n) => [n, w.nations[n].pnl]).sort((a, b) => b[1] - a[1])[0];
+    if (best && best[1] !== 0) extras.weeklyTop = NATION_KO[best[0]];
+  } catch (e) { /* 생략 */ }
+  extras.gateOpen = await new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: gatePort(), path: '/ping', timeout: 1000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+  });
+  return extras;
 }
 
 // ====================== 병법서(SCR-007)·논공행상(SCR-006) — 읽기 전용(TSK-021) ======================
@@ -288,7 +377,7 @@ function renderMerit(opts) {
   H.push('</section>');
   // 비교 기준선(KODEX 200) — 4종 지표(TSK-022 / REQ-027)
   const bs = benchmark.summary(opts);
-  H.push('<section><h3>비교 기준선 - KODEX 200 보유 시</h3>');
+  H.push('<section><h3>천하 대세(KODEX 200) 보유 시 — 비교 기준선</h3>');
   if (!bs) {
     H.push('<p class="muted">기준선 원장 없음</p>');
   } else {
@@ -298,8 +387,10 @@ function renderMerit(opts) {
   }
   H.push('</section>');
 
-  // 거래 목록(손익 열과 별도로 분면 표기)
-  H.push('<section><h3>거래별</h3><table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
+  // 거래 목록(손익 열과 별도로 분면 표기). 판정 0건이면 '아직 전공 없음'(지령 016 용어표)
+  H.push('<section><h3>거래별</h3>');
+  if (trades.length === 0) H.push(`<p class="muted">${terms.TERMS.no_judged} — 회군(매도)·기한 도래부터 쌓인다</p>`);
+  H.push('<table><tr><th>날짜</th><th>종목</th><th>손익</th><th>분면</th></tr>');
   for (const t of trades) {
     const q = merit.quadrantOf(Object.assign({}, t, { compliant: merit.isCompliant(t) }));
     const cls = q === 'honorable_defeat' ? 'q-honor' : q === 'true_failure' ? 'q-fail' : `q-${q}`;
@@ -365,7 +456,7 @@ function renderNations(opts, weekParam) {
   const weekly = nation.weeklyReport({ from, to }, opts);
   const bench = benchNationReturns(opts);
 
-  const H = pageHead('세력전 — 촉·위·오');
+  const H = pageHead('삼국 정립 — 촉·위·오');
   H.push(qc
     ? `<p class="muted">평가 기준: ${esc(String(qc.updated_at))} 시세(그림자 최근 조회 — 실시간 아님)</p>`
     : '<p class="muted">시세 캐시 없음 — 평가는 원가(평단) 기준</p>');
@@ -421,7 +512,7 @@ function renderNations(opts, weekParam) {
 
   // 주간 순위표(논공행상 — 월요일 군의용)
   const ranked = nation.NATIONS.slice().sort((a, b) => weekly.nations[b].pnl - weekly.nations[a].pnl);
-  H.push(`<section><h2>주간 순위표 <span class="muted" style="font-size:12px">${esc(from)} ~ ${esc(to)}</span></h2>`);
+  H.push(`<section><h2>이번 주 논공(주간 순위표) <span class="muted" style="font-size:12px">${esc(from)} ~ ${esc(to)}</span></h2>`);
   H.push('<table><tr><th>순위</th><th>나라</th><th>손익</th><th>출병 수</th><th>매복 성공률</th></tr>');
   ranked.forEach((n, i) => {
     const w = weekly.nations[n];
@@ -480,7 +571,7 @@ function renderCouncil(opts, agendaFilter, dateFilter) {
     const target = dateFilter || dates[0];
     if (target) rows = rows.filter((r) => r.date === target);
   }
-  const H = pageHead('책사단 — 의견판');
+  const H = pageHead('군막 회의 — 책사단 의견판');
   {
     const dates = [...new Set(all.map((r) => r.date))].sort().reverse();
     if (dates.length > 1) {
@@ -552,7 +643,7 @@ function renderCouncilMerit(opts) {
   // 캐시(ranks.json) 결손이어도 장부에서 순수 재계산(쓰기 없음) — 500 금지
   const ranks = council.readRanks(opts) || councilScore.computeRanks(opts);
   const dw = councilScore.disagreementWarning(opts);
-  const H = pageHead('책사단 — 공적판');
+  const H = pageHead('책사 공적부');
   if (dw.warn) {
     H.push(`<div style="background:#9a2b00;color:#fff;padding:8px 16px">한목소리 경고 — 최근 ${dw.count}안건 불일치율 평균 ${dw.avg}% (20% 미만: 책사단이 사실상 한 명)</div>`);
   }
@@ -670,17 +761,19 @@ function start(opts) {
       return;
     }
     if (url === '/' || url === '/index.html') {
-      let html;
-      try {
-        html = render(board.gather(opts), opts);
-      } catch (e) {
-        // 조립 실패도 500 텍스트로만 — 쓰기 없음
-        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('집계 실패');
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
+      (async () => {
+        let html;
+        try {
+          html = render(board.gather(opts), opts, await homeExtras(opts));
+        } catch (e) {
+          // 조립 실패도 500 텍스트로만 — 쓰기 없음
+          res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('집계 실패');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+      })();
       return;
     }
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
