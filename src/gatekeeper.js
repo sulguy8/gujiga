@@ -125,7 +125,7 @@ const PAGE_CSS = [
 ].join('');
 
 function renderList(drafts) {
-  const H = [`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>출사표 목록</title><style>${PAGE_CSS}</style></head><body>`];
+  const H = [`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>옥새 찍는 곳 — 출사표 목록</title><style>${PAGE_CSS}</style></head><body>`];
   H.push('<header>출사표 — 확인·실행 대기</header><main>');
   if (drafts.length === 0) {
     H.push('<section><p class="muted">대기 중인 출사표 없음</p></section>');

@@ -84,7 +84,7 @@ test('시나리오1: localhost에서 현황판이 열린다', async () => {
     await withServer(dir, {}, async (srv) => {
       const res = await request(srv.port);
       assert.equal(res.status, 200);
-      assert.match(res.body, /군영 현황판/);
+      assert.match(res.body, /주군의 군영/); // 지령 016 용어
       assert.match(res.headers['content-type'], /text\/html/);
     });
   } finally {
@@ -175,7 +175,8 @@ test('시나리오3: 관직·병력·성·포로·전공 값이 장부와 일치
     await withServer(dir, {}, async (srv) => {
       const { body } = await request(srv.port);
       // 다섯 구역 존재
-      for (const sec of ['관직', '병력', '출병 중인 성', '포로', '전공']) {
+      // 지령 016 용어
+      for (const sec of ['벼슬', '병력', '점령 중인 성', '포로', '전공']) {
         assert.ok(body.includes(sec), `구역: ${sec}`);
       }
       // 관직 카드: 태수 30만/3성

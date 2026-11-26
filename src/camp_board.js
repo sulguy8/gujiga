@@ -128,12 +128,19 @@ function castles(opts) {
           qty: p.qty,
           amount,
           troops: troopsOf(amount),
+          avgPrice: p.avg_price,
           stopPrice: p.stop_price,
+          targetPrice: p.target_price != null ? p.target_price : null,
+          deadline: p.deadline || null,
+          hypothesisIds: p.hypothesis_ids || [],
           price,
           evalAmount: price != null ? price * p.qty : null,
           returnPct: price != null && p.avg_price > 0 ? Math.round(((price / p.avg_price) - 1) * 1000) / 10 : null,
           stopDistance: price != null && p.stop_price != null && p.stop_price > 0
             ? Math.round(((price - p.stop_price) / p.stop_price) * 1000) / 10
+            : null,
+          flagDistance: price != null && p.target_price != null && price > 0
+            ? Math.round(((p.target_price - price) / price) * 1000) / 10
             : null,
         };
       }),
@@ -164,6 +171,65 @@ function revengeBanToday(opts, today) {
   }
 }
 
+// 상태 칩(지령 016): 최신 시장 스냅샷에서 천하 정세(날씨)·봉화(신호 n/6)·코스피
+function marketChips(opts) {
+  try {
+    const dir = path.join(paths.resolveDataDir(opts), 'market_snapshot');
+    if (!fs.existsSync(dir)) return null;
+    const f = fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort().pop();
+    if (!f) return null;
+    const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    return {
+      date: j.snapshot_date,
+      weather: j.weather || null,
+      signalsOn: Array.isArray(j.signals) ? j.signals.filter((s) => s.on).length : null,
+      signalsTotal: Array.isArray(j.signals) ? j.signals.length : 6,
+      kospiClose: j.kospi_close != null ? j.kospi_close : null,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// 오늘의 군막 회의(지령 016): 최신 날짜 안건들 — 의견 칩·시범 종합·군주 결정
+function councilToday(opts) {
+  try {
+    const councilMod = require('./council');
+    const everything = councilMod.readVerdicts(opts);
+    const rows = everything.filter((r) => !r.type);
+    if (rows.length === 0) return { none: true, agendas: [] };
+    const latestDate = rows.map((r) => r.date).sort().pop();
+    const amends = new Map(everything.filter((r) => r.type === 'amend').map((r) => [`${r.agenda_id}|${r.advisor}`, r]));
+    const aside = new Map(everything.filter((r) => r.type === 'aside_synthesis').map((r) => [r.agenda_id, r]));
+    const byAgenda = new Map();
+    for (const r of rows.filter((x) => x.date === latestDate)) {
+      if (!byAgenda.has(r.agenda_id)) byAgenda.set(r.agenda_id, []);
+      byAgenda.get(r.agenda_id).push(r);
+    }
+    const agendas = [...byAgenda.entries()].map(([id, items]) => {
+      const first = items[0];
+      const syn = items.find((r) => r.advisor === '제갈량' && r.source === 'synthesis');
+      const a = aside.get(id);
+      return {
+        agendaId: id,
+        date: first.date,
+        label: first.ticker
+          ? `${first.name || symbols.nameOf(first.ticker, opts) || first.ticker}(${first.ticker}) ${first.agenda_type === 'hold' ? '보유 점검' : '진입 검토'}`
+          : (first.agenda_label || '복합 안건'),
+        votes: items.filter((r) => r.advisor !== '제갈량').map((r) => {
+          const am = amends.get(`${id}|${r.advisor}`);
+          return { advisor: r.advisor, stance: (r.raw_view || (am && am.raw_view)) ? '모름' : r.stance };
+        }),
+        synthesis: syn ? syn.stance : (a && a.pick) || null,
+        decision: a && a.decision_pick ? a.decision_pick : null,
+      };
+    });
+    return { none: false, date: latestDate, agendas };
+  } catch (e) {
+    return { none: true, agendas: [], error: '집계 실패' };
+  }
+}
+
 // 현황판 전체 데이터(읽기 전용).
 function gather(opts) {
   const today = (opts && opts.today) || new Date().toISOString().slice(0, 10);
@@ -174,6 +240,8 @@ function gather(opts) {
     castles: castles(opts),
     captives: captivesCard(opts),
     revengeBan: revengeBanToday(opts, today),
+    market: marketChips(opts),
+    council: councilToday(opts),
   };
 }
 
