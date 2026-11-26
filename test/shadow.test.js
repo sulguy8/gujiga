@@ -161,11 +161,14 @@ function at(s, time) {
 
 // ===== 시나리오 1(a): 코드 경계 — 주문류 모듈·함수 참조 0 =====
 test('시나리오1a: shadow 코드에 주문 경로가 없다(모듈 경계·정규식)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'shadow.js'), 'utf8');
-  for (const mod of ['./gate', './kis_adapter', './gatekeeper', './order_draft', './stop_judgment']) {
-    assert.ok(!src.includes(`require('${mod}')`), `주문 경로 모듈 금지: ${mod}`);
+  // shadow 본문 + shadow가 끌어들이는 신규 모듈(council 계열)까지 같은 경계를 적용한다(군사 지적 2026-11-26)
+  for (const file of ['shadow.js', 'council.js', 'council_score.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
+    for (const mod of ['./gate', './kis_adapter', './gatekeeper', './order_draft', './stop_judgment']) {
+      assert.ok(!src.includes(`require('${mod}')`), `${file} 주문 경로 모듈 금지: ${mod}`);
+    }
+    assert.ok(!/\.(order|submit|amend|revoke|modify|cancel)\s*\(/.test(src), `${file} 주문류 호출 0`);
   }
-  assert.ok(!/\.(order|submit|amend|revoke|modify|cancel)\s*\(/.test(src), '주문류 호출 0');
 });
 
 // ===== 시나리오 1(b)+2+3+6+7: 하루 전체 시뮬레이션 =====

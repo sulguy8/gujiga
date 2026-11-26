@@ -35,6 +35,7 @@ const benchmark = require('./benchmark');
 const retreat = require('./retreat');
 const backup = require('./backup');
 const nation = require('./nation');
+const councilScore = require('./council_score');
 
 const JOBS = [
   { name: 'snapshot_0830', time: '08:30', catchup: true },
@@ -526,6 +527,27 @@ async function runOnce(opts) {
   if (minutes >= openMin && minutes <= closeMin + 30) {
     await watchSorties(date, opts);
     await watchRetreats(date, opts);
+  }
+
+  // 15:45 책사단 채점(TSK-026 / 지령 012): 5거래일 경과 의견 채점 → 관직 재계산 → 한목소리 경고
+  // JOBS 미등록(detectMissed 감사 밖) 의도: 놓친 날은 다음 거래일 배치가 자동 만회한다(채점 멱등).
+  // 실패 note도 hasRec에 걸려 당일 재시도 없음 — 같은 이유(다음 거래일 만회)로 스팸 방지를 택함.
+  if (minutes >= toMin('15:45') && opts.providers.closes && !hasRec(log, 'council_score_1545', date)) {
+    try {
+      const s = await councilScore.scoreVerdicts(date, Object.assign({}, opts, { closes: opts.providers.closes }));
+      councilScore.recomputeRanks(opts);
+      const dw = councilScore.disagreementWarning(opts);
+      if (dw.warn) {
+        await send(opts, {
+          kind: 'council_warn', title: '책사단 한목소리 경고',
+          body: `최근 ${dw.count}안건 불일치율 평균 ${dw.avg}% — 20% 미만(가짜 다양성 의심)`,
+        });
+      }
+      logJob('run', 'council_score_1545', date, opts, { scored: s.scored, warn: dw.warn === true });
+      ran.push('council_score_1545');
+    } catch (e) {
+      logJob('note', 'council_score_1545', date, opts, { error: e.message });
+    }
   }
 
   // 장중 5분 척후 → [액션 필요] 보고 시 insight(판정 필요), 성벽 '이탈'은 advise(기준2)
