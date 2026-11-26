@@ -6,6 +6,16 @@
 - REPL fetch 전 openTab('https://m.stock.naver.com') 하나, 끝나면 closeTab. 사용법 상세: trading\kis_notes.md.
 - 장부: <ASIDE_ROOT>\trading\mock_portfolio.md (이 파일만 수정). 지정가만. 가격은 kis.roundTick(가격, ETF여부, 'up'|'down').
 
+## 주문 인자 규칙 (2026-11-25 허도 관문 대비, 구·신 클라이언트 공통)
+- 모든 주문: mock.order(side, code, qty, price, { reason, nation, stop_price, target_price, deadline }). 빠뜨리면 새 관문에서 '출사표 불성립'으로 차단된다.
+  - reason: 한 줄 근거(필수). nation: 촉='chok', 위='wi', 오='o'.
+  - hypothesis_ids(매수 필수, 2026-11-26 군주 결정): 근거 가설 ID 배열. 알지노믹스·씨어스 = ['B2'](지수 편입), 와이씨·디케이티 = ['B7'](실적 상향·수주 + 차트 4점 눌림), 그 밖의 종목은 장부 '진입 대기 규칙' 표의 근거 열을 따르고, 근거가 없으면 주문하지 않는다. 매도는 불필요. D계열(걸러내기)은 근거로 쓰지 않는다.
+  - 모의 세력전은 근거 등급별 병력 상한을 적용하지 않는다(실전에만). 종목당 25만·나라별 2종목은 그대로.
+  - 매수: stop_price = 장부 '손절(종가 미만)' 값, target_price = 장부 목표가(숫자). 목표가 날짜형(예: 12/10 장중 매도)이면 target_price = 지정가 x 1.10 (roundTick 'down')을 '참고 목표'로 넣고 실제 매도는 장부 규칙(날짜)을 따른다. deadline = 장부 '한도'(YYYY-MM-DD).
+  - 매도: stop_price·target_price = 해당 보유 행 값, deadline = 오늘.
+- 오류 메시지에 '[정지]'가 있으면(관문 꺼짐·토큰 불일치) 그 회차 주문을 모두 중단하고 보고 첫 줄을 '[정지] 관문 꺼짐'으로. 재시도하지 않는다.
+- 관문이 차단하면(blocked) 장부 '미체결 주문' 대신 '매매 기록'에 '관문 차단: 사유(block_reason)'로 남긴다.
+
 ## 아침 08:15 (장 시작 전)
 1. 장부의 '보유'와 mock.balance()를 대조, 다르면 장부를 잔고 기준으로 고치고 보고.
 2. 전일 종가(일봉 차트) 기준으로 보유 종목의 손절/목표/시간 한도를 판정.

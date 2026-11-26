@@ -9,16 +9,18 @@
   let lastCall = 0;
   const pace = async () => { const w = lastCall + 1200 - Date.now(); if (w > 0) await sleep(w); lastCall = Date.now(); };
 
+  // 2026-11-25 허도 관문 경유판: 키를 직접 읽지 않고 gujiga 관문(127.0.0.1:62910)의 dailyCandle을 부른다.
   async function loadKIS(code) {
-    const cfg = JSON.parse(await fs.readFile(ROOT + '\\secrets\\kis.json', 'utf8')).real;
-    const tok = JSON.parse(await fs.readFile(ROOT + '\\secrets\\kis_token_real.json', 'utf8'));
-    if (new Date(tok.expires.replace(' ', 'T') + '+09:00') < new Date()) throw new Error('KIS 토큰 만료(kis_client make("real") 후 token 재발급 필요)');
-    const end = new Date(), start = new Date(Date.now() - 160 * 864e5);
+    let tok;
+    try { tok = (await fs.readFile(ROOT + '\\secrets\\gujiga_broker.token', 'utf8')).trim(); } catch (e) { throw new Error('[정지] 관문 꺼짐: 관문 토큰 파일 없음'); }
     await pace();
-    const u = 'https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice?' + new URLSearchParams({ FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: code, FID_INPUT_DATE_1: ymd(start), FID_INPUT_DATE_2: ymd(end), FID_PERIOD_DIV_CODE: 'D', FID_ORG_ADJ_PRC: '0' });
-    const j = await (await fetch(u, { headers: { 'content-type': 'application/json; charset=utf-8', authorization: 'Bearer ' + tok.token, appkey: cfg.appkey, appsecret: cfg.appsecret, tr_id: 'FHKST03010100', custtype: 'P' } })).json();
-    if (j.rt_cd !== '0') throw new Error('KIS 일봉 실패 ' + j.msg1);
-    return (j.output2 || []).filter(x => x.stck_bsop_date).map(x => ({ d: x.stck_bsop_date, o: +x.stck_oprc, h: +x.stck_hgpr, l: +x.stck_lwpr, c: +x.stck_clpr, v: +x.acml_vol })).reverse();
+    let r;
+    try { r = await fetch('http://127.0.0.1:62910/call', { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8', 'x-gate-token': tok }, body: JSON.stringify({ env: 'real', fn: 'dailyCandle', args: [code, 160] }) }); }
+    catch (e) { throw new Error('[정지] 관문 꺼짐: 접속 불가'); }
+    if (r.status === 401) throw new Error('[정지] 관문 토큰 불일치');
+    const j = await r.json();
+    if (!j.ok) throw new Error('KIS 일봉 실패(관문) ' + (j.error || ''));
+    return (j.result || []).map(x => ({ d: String(x.date).replace(/-/g, ''), o: x.open, h: x.high, l: x.low, c: x.close, v: x.vol }));
   }
   async function loadNaver(code) {
     const end = new Date(), start = new Date(Date.now() - 400 * 864e5);

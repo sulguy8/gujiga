@@ -15,3 +15,4 @@
 - 2026-11-24 확인: 모의 주문은 08:27에 '모의투자 장시작전 입니다'(rt_cd 1)로 거부, 08:30:43에는 접수됨. 장전 주문은 08:30 이후. 아침 루틴을 08:31로 옮김.
 - 2026-11-24 구현: 하루 손실 한도(실전 매수 시 당일 시작 총평가 대비 -5만원 이하면 차단, 기준은 trading\data\real_day_start.json). 모의 1회 한도는 guard.mockMaxOrderKRW(50만), 실전은 maxOrderKRW(현령 20만).
 - 실전 주문은 사용자 '실행' 확인 없이 절대 호출 금지. 지정가만.
+- 2026-11-25 허도 관문(gujiga gatekeeper) 전환 예정: 클라이언트가 관문(127.0.0.1:62910)을 경유. order 5번째 인자 opt = { confirmed, reason(필수), stop_price, target_price, deadline, nation }. 출사표 항목 없으면 관문이 차단. 실전은 군주 '실행' 후 confirmed:true + reason + 성벽·목표·기한 필수. 관문 꺼짐 시 '[정지] 관문 꺼짐' 오류.
