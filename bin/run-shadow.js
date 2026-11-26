@@ -67,6 +67,8 @@ async function buildProviders() {
       if (todayFills == null) throw new Error('체결조회 미선행');
       return todayFills;
     },
+    // 책사단 안건 입력용 일봉(곽가 이동평균·법정 추세 — 조회 전용)
+    dailyBars: async (symbol) => gate.query('real', 'dailyCandle', [symbol, 60], gateOpts),
     // 책사단 채점용 종가 조회(일봉 J — krx_official 태그 포함, 조회 전용). 심볼당 1회 캐시.
     closes: (() => {
       const cache = new Map();

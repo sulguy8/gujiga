@@ -302,6 +302,6 @@ function normalizeStance(stance, agendaType) {
 
 module.exports = {
   runCouncil, synthesize, readVerdicts, appendLines, verdictsFile,
-  readRanks, writeRanks, ranksFile,
+  readRanks, writeRanks, ranksFile, normalizeStance,
   ADVISORS_RULE, ADVISORS_AI, STANCES,
 };

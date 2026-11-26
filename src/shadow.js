@@ -35,6 +35,7 @@ const benchmark = require('./benchmark');
 const retreat = require('./retreat');
 const backup = require('./backup');
 const nation = require('./nation');
+const councilMod = require('./council');
 const councilScore = require('./council_score');
 
 const JOBS = [
@@ -340,6 +341,60 @@ async function watchRetreats(date, opts) {
   if (changed) state.write('positions', positions, opts);
 }
 
+// --- 책사단 안건 수집(지령 013): "그날 결정할 것"만 — 없으면 책사단 생략 ---
+// 보유 점검(hold): 성벽(손절선) 3% 이내 접근 종목. 진입 검토(entry): watchlist에
+// entry_low/high가 있고 현재가가 범위 ±3% 안인 관심 성 최대 2개.
+// inputs의 bars는 providers.dailyBars(비동기·조회 전용)로 공급 — 없으면 곽가·법정은 폴백.
+async function buildCouncilAgendas(date, opts) {
+  const dataDir = paths.resolveDataDir(opts);
+  const agendas = [];
+  const captiveToday = readLog(dataDir, 'captive_ledger')
+    .some((r) => r.trade_date === date && r.realized_pnl < 0);
+  const getBars = async (symbol) => {
+    if (!opts.providers || !opts.providers.dailyBars) return undefined;
+    try {
+      return await opts.providers.dailyBars(symbol);
+    } catch (e) {
+      return undefined;
+    }
+  };
+  const quoteOf = (symbol) => {
+    try {
+      return opts.providers.quote(symbol).price;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  for (const p of (state.read('positions', opts) || []).filter((x) => x.status === 'open')) {
+    if (p.stop_price == null) continue;
+    const price = quoteOf(p.symbol);
+    if (price == null) continue;
+    const dist = Math.round(((price - p.stop_price) / p.stop_price) * 1000) / 10;
+    if (dist > 3) continue; // 판정 필요 없음 — 안건 아님
+    agendas.push({
+      id: `AG-${date}-${p.symbol}-hold`, date, ticker: p.symbol, name: p.name || null,
+      agenda_type: 'hold',
+      inputs: { stopDistPct: dist, captiveToday, bars: await getBars(p.symbol) },
+    });
+  }
+  let entries = 0;
+  for (const w of (state.read('watchlist', opts) || [])) {
+    if (entries >= 2) break; // 관심 성 최대 2개(지령 013)
+    if (w.status === 'excluded' || w.entry_low == null || w.entry_high == null) continue;
+    const price = quoteOf(w.symbol);
+    if (price == null) continue;
+    if (price < w.entry_low * 0.97 || price > w.entry_high * 1.03) continue;
+    agendas.push({
+      id: `AG-${date}-${w.symbol}-entry`, date, ticker: w.symbol, name: w.name || null,
+      agenda_type: 'entry',
+      inputs: { captiveToday, bars: await getBars(w.symbol) },
+    });
+    entries++;
+  }
+  return agendas;
+}
+
 // --- 매수 체결 자동 반영(출병 감지 — 군사 지적 2026-11-26) ---
 // 예약(매복) 매수가 나중에 체결되면 order_log·positions 어디에도 기록되지 않는 사각을 메운다.
 // 멱등 키 = (계좌, 주문번호) — KIS 주문번호는 계좌별 일련번호라 모의·실전이 겹칠 수 있다.
@@ -500,8 +555,10 @@ async function runOnce(opts) {
   }
 
   // 08:31 군의(수집→판정→스냅샷→보고) + sox 3일 창 갱신 + PC 알림
+  // 책사단(지령 013): 안건이 있으면 군의 counsel 호출 '한 번'에 4목소리 편승(별도 회차 0)
   if (minutes >= toMin('08:31') && !hasRec(log, 'council_0831', date)) {
-    const c = await gunshi.morningCouncil(opts);
+    const councilAgendas = await buildCouncilAgendas(date, opts);
+    const c = await gunshi.morningCouncil(Object.assign({}, opts, { councilAgendas }));
     const sox = c.collected.judgeInputs.us_summary && c.collected.judgeInputs.us_summary.sox;
     updateSoxWindow(sox, date, opts);
     await send(opts, {
@@ -543,7 +600,15 @@ async function runOnce(opts) {
           body: `최근 ${dw.count}안건 불일치율 평균 ${dw.avg}% — 20% 미만(가짜 다양성 의심)`,
         });
       }
-      logJob('run', 'council_score_1545', date, opts, { scored: s.scored, warn: dw.warn === true });
+      // 실관찰 메모(지령 013 5항): 15:45 일봉 응답에 '당일 봉'이 포함되는지 기록 — 채점 보수화 완화 판단용
+      let todayBar = null;
+      try {
+        todayBar = await opts.providers.closes('069500', date);
+      } catch (e) { /* 결측 기록 */ }
+      logJob('run', 'council_score_1545', date, opts, {
+        scored: s.scored, warn: dw.warn === true,
+        today_bar_present: !!todayBar, today_bar_source: todayBar ? todayBar.source : null,
+      });
       ran.push('council_score_1545');
     } catch (e) {
       logJob('note', 'council_score_1545', date, opts, { error: e.message });
@@ -553,6 +618,7 @@ async function runOnce(opts) {
   // 장중 5분 척후 → [액션 필요] 보고 시 insight(판정 필요), 성벽 '이탈'은 advise(기준2)
   if (minutes >= openMin && minutes <= closeMin && scoutDue(dataDir, date, minutes, opts)) {
     const pending = [];
+    const councilSent = new Set(); // 같은 회차에 같은 심볼 보고 2건 — 안건 중복 방어(군사 지적)
     const hook = (e) => {
       if (e.kind === 'report') {
         pending.push(send(opts, {
@@ -560,7 +626,28 @@ async function runOnce(opts) {
           body: `${e.symbol} ${e.condition} 현재가 ${e.price}`,
           fields: { symbol: e.symbol, condition: e.condition, price: e.price },
         }));
-        pending.push(gunshi.insight({ type: 'judgment_needed', data: { symbol: e.symbol, price: e.price, line: e.line } }, opts.strategistOpts));
+        // 장중 책사단(지령 013 2항): 척후 [액션 필요] 회차의 insight 호출에 편승(척후 몫 6회 안 — 별도 회차 0).
+        // 하루 1심: 아침 군의에서 이미 기록된 안건이면 싣지 않는다(출력 낭비 방지 — 군사 지적 2026-11-26).
+        pending.push((async () => {
+          const agendaId = `AG-${date}-${e.symbol}-hold`;
+          const already = councilSent.has(agendaId) ||
+            councilMod.readVerdicts(opts).some((r) => !r.type && r.agenda_id === agendaId);
+          councilSent.add(agendaId);
+          let agendas = [];
+          if (!already) {
+            const dist = e.line != null ? Math.round(((e.price - e.line) / e.line) * 1000) / 10 : undefined;
+            let bars;
+            try {
+              bars = opts.providers.dailyBars ? await opts.providers.dailyBars(e.symbol) : undefined;
+            } catch (err) { bars = undefined; }
+            agendas = [{ id: agendaId, date, ticker: e.symbol, agenda_type: 'hold', inputs: { stopDistPct: dist, bars } }];
+          }
+          return gunshi.insight(
+            { type: 'judgment_needed', data: { symbol: e.symbol, price: e.price, line: e.line } },
+            opts.strategistOpts,
+            { dataDir: opts.dataDir, councilAgendas: agendas }
+          );
+        })());
         if (e.condition === 'stop_approach' && e.line != null && e.price <= e.line) {
           pending.push(gunshi.advise({ wall_breached: { symbol: e.symbol, close: e.price, stop: e.line } }, opts.strategistOpts));
         }
