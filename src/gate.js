@@ -343,6 +343,11 @@ async function submit(draft, opts) {
     account_type: draft.account_type, nation: draft.nation || null,
     symbol: draft.symbol, side: draft.side, order_type: 'limit',
     price: draft.price, qty: draft.qty, amount: (draft.qty || 0) * (draft.price || 0),
+    // 출사표 핵심 필드 — 나중 체결(매복) 시 그림자가 positions를 복원할 근거(매수 자동 반영)
+    stop_price: draft.stop_price != null ? draft.stop_price : null,
+    target_price: draft.target_price != null ? draft.target_price : null,
+    deadline: draft.deadline || null,
+    hypothesis_ids: Array.isArray(draft.hypothesis_ids) ? draft.hypothesis_ids : null,
     confirmed: draft.user_confirmed === true, reason: draft.reason || null,
     created_by: draft.created_by || null,
   };

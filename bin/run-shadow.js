@@ -40,8 +40,8 @@ async function buildProviders() {
 
   // 체결조회(모의) — 회군 감지용. pdno(종목코드)로 직접 매칭(출사표 003 — 역변환 제거).
   // pdno가 비면 shadow가 그 행을 회군 감지에서 건너뛰고 기록한다.
-  async function fetchFills(ymd) {
-    const f = await gate.query('mock', 'fills', [ymd], gateOpts);
+  async function fetchFills(ymd, env) {
+    const f = await gate.query(env || 'mock', 'fills', [ymd], gateOpts);
     return (f.rows || []).map((r) => ({
       odno: r.odno,
       symbol: r.symbol || null, // 어댑터가 pdno를 실어 준다
@@ -50,6 +50,7 @@ async function buildProviders() {
     }));
   }
   let todayFills = null;
+  let todayFillsReal = null;
 
   return {
     quote: (sym) => {
@@ -66,7 +67,17 @@ async function buildProviders() {
       if (todayFills == null) throw new Error('체결조회 미선행');
       return todayFills;
     },
-    _prefetchFills: async (ymd) => { todayFills = await fetchFills(ymd); },
+    fillsReal: (ymd) => {
+      // 실전 체결조회(조회 전용 — 주문 아님). 매수 자동 반영(watchSorties)용.
+      if (todayFillsReal == null) throw new Error('실전 체결조회 미선행');
+      return todayFillsReal;
+    },
+    _prefetchFills: async (ymd) => {
+      todayFills = await fetchFills(ymd, 'mock');
+      try {
+        todayFillsReal = await fetchFills(ymd, 'real');
+      } catch (e) { /* 실전 체결조회 실패 — 실전 감지만 생략(다음 틱 재시도) */ }
+    },
   };
 }
 
