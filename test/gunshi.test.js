@@ -87,6 +87,25 @@ else if(mode==='insight_ok') out({
   counter_lesson:'반대로 원소는 머뭇거리다 때를 놓쳤다',
 });
 else if(mode==='insight_bad') out({ anecdotes:['x'], options:{}, recommend:'top' });
+else if(mode==='counsel_council') out({
+  market_lines:[\`야간선물 \${d.night_future_pct}%\`],
+  today_actions:['관망'],
+  council_voices:(d.council_agendas||[]).flatMap(a=>['노숙','순욱','육손','장송'].map(adv=>({
+    agenda_id:a.id, advisor:adv, stance:'관망', confidence:2, rationale:adv+' 시범 의견',
+  }))),
+});
+else if(mode==='insight_council') out({
+  anecdotes:[\`조조는 \${d.price}원에서 버텼다\`],
+  options:{
+    top:{action:'매도', gain:'위험 축소', lose:'반등 상실'},
+    mid:{action:'절반', gain:'균형', lose:'지연'},
+    low:{action:'유지', gain:'반등', lose:'노출'},
+  },
+  recommend:'top', note:'최종 선택은 군주',
+  council_voices:(d.council_agendas||[]).flatMap(a=>['노숙','순욱','육손','장송'].map(adv=>({
+    agenda_id:a.id, advisor:adv, stance:'회군', confidence:3, rationale:adv+' 장중 의견',
+  }))),
+});
 else out({});
 `;
   fs.writeFileSync(p, script, 'utf8');
@@ -342,4 +361,77 @@ test('상한: counsel·advise·insight 호출이 하루 상한(8회) 집계에 �
   } finally {
     await down(s);
   }
+});
+
+// ===== 책사단 편승(지령 013 / ARC-010): 별도 호출 0·같은 counsel 응답에서 4목소리 =====
+function readCouncil(dir) {
+  const f = path.join(dir, 'council', 'verdicts.jsonl');
+  if (!fs.existsSync(f)) return [];
+  return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(JSON.parse);
+}
+function upBars() {
+  return Array.from({ length: 60 }, (_, i) => ({ close: 10000 + i * 100 }));
+}
+function mkAgenda(dir, over) {
+  return Object.assign({
+    id: 'AG-2026-11-25-232140-entry', date: '2026-11-25', ticker: '232140', name: '와이씨',
+    agenda_type: 'entry', inputs: { bars: upBars(), captiveToday: false, stopDistPct: 10 },
+  }, over || {});
+}
+
+test('편승1: 군의 counsel 1회에 안건 2건 — verdicts 16건·counsel 호출 1건·AI 의견 반영', async () => {
+  const s = await boot();
+  try {
+    s.opts.strategistOpts = s.stratOpts('counsel_council');
+    const r = await gunshi.morningCouncil(Object.assign({}, s.opts, {
+      councilAgendas: [mkAgenda(s.dir), mkAgenda(s.dir, { id: 'AG-2026-11-25-007810-entry', ticker: '007810' })],
+    }));
+    assert.ok(r.council && r.council.results.length === 2, '책사단 결과 2안건');
+    const rowsC = readCouncil(s.dir);
+    assert.equal(rowsC.length, 16, '안건 2 × (7+1)');
+    assert.equal(rowsC.find((x) => x.advisor === '노숙').source, 'ai', '편승 의견 반영');
+    assert.equal(rowsC.find((x) => x.advisor === '곽가').source, 'rule', '규칙 책사');
+    // counsel 호출은 1건뿐(안건 수와 무관 — 편승)
+    const calls = rows(s.dir, 'strategist_log').filter((x) => x.type === 'call' && x.feature === 'counsel');
+    assert.equal(calls.length, 1, 'AI 호출 1회 공유');
+    // 법정 입력 보강: 군의 수집 외국인 연속일수(fakeKis: +1)
+    assert.match(rowsC.find((x) => x.advisor === '법정').rationale, /제한 판정|쏠림/, '법정 제한 판정 작동');
+  } finally { await down(s); }
+});
+
+test('편승2: counsel 응답에 voices 없음 — AI 4인 폴백·규칙 3인 정상·처리 생존', async () => {
+  const s = await boot();
+  try {
+    const r = await gunshi.morningCouncil(Object.assign({}, s.opts, { councilAgendas: [mkAgenda(s.dir)] })); // counsel_ok — voices 없음
+    assert.ok(r.council, '책사단 실행됨');
+    const rowsC = readCouncil(s.dir);
+    assert.equal(rowsC.filter((x) => x.source === 'fallback').length, 4, 'AI 4인 폴백(장송 포함)');
+    assert.equal(rowsC.filter((x) => x.source === 'rule').length, 3, '규칙 3인 정상');
+  } finally { await down(s); }
+});
+
+test('편승3: 안건 없음 — 책사단 생략·장부 없음', async () => {
+  const s = await boot();
+  try {
+    const r = await gunshi.morningCouncil(s.opts);
+    assert.equal(r.council, null, '책사단 생략');
+    assert.equal(readCouncil(s.dir).length, 0, '장부 기록 0');
+  } finally { await down(s); }
+});
+
+test('편승4: 장중 insight 호출에 편승 — 같은 호출 응답으로 hold 안건 기록', async () => {
+  const s = await boot();
+  try {
+    const d = await gunshi.insight(
+      { type: 'judgment_needed', data: { symbol: '458870', price: 12600, line: 12500 } },
+      s.stratOpts('insight_council'),
+      { dataDir: s.dir, councilAgendas: [mkAgenda(s.dir, { id: 'AG-2026-11-25-458870-hold', ticker: '458870', agenda_type: 'hold' })] }
+    );
+    assert.ok(d, 'insight 자체도 정상');
+    const rowsC = readCouncil(s.dir);
+    assert.equal(rowsC.length, 8, '7+1건');
+    assert.equal(rowsC.find((x) => x.advisor === '육손').stance, '회군', '장중 의견 반영(hold 안건 회군 유효)');
+    const calls = rows(s.dir, 'strategist_log').filter((x) => x.type === 'call' && x.feature === 'insight');
+    assert.equal(calls.length, 1, 'insight 호출 1회 공유');
+  } finally { await down(s); }
 });

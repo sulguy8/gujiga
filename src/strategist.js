@@ -128,7 +128,13 @@ function buildInput(feature, payload) {
 
   parts.push('');
   parts.push('[출력 형식]');
-  parts.push(OUTPUT_HINT[feature] || '하나의 JSON 객체만 출력.');
+  let hint = OUTPUT_HINT[feature] || '하나의 JSON 객체만 출력.';
+  // 책사단 편승(ARC-010 / 지령 013): 별도 호출 없이 이 호출의 출력에 4목소리를 함께 요구.
+  if (payload.councilRequested) {
+    hint = hint.replace(/\s*\}\s*$/, '') +
+      ', "council_voices": [신뢰 입력의 council_agendas 각 안건마다 노숙(미장·해외)·순욱(실적·가치)·육손(이벤트·일정)·장송(공시·뉴스) 4건 — {agenda_id, advisor, stance(출병|관망|반대|회군 중 하나), confidence(1~5 정수), rationale(한 줄)}] }';
+  }
+  parts.push(hint);
   return parts.join('\n');
 }
 

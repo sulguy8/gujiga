@@ -22,6 +22,7 @@ const state = require('./state');
 const ledger = require('./ledger');
 const paths = require('./paths');
 const { kstParts } = require('./kst');
+const council = require('./council');
 
 // ---------- 숫자 검증기 ----------
 // 입력(판정값·스냅샷)에 있는 숫자만 출력에 허용한다.
@@ -97,6 +98,17 @@ async function morningCouncil(opts) {
   judge.recordStage(j.stage, opts);
   const snapshotFile = market.saveSnapshot(collected, j, opts);
 
+  // 책사단 편승(ARC-010 / 지령 013): 안건이 주입되면 counsel '같은 호출'에 4목소리를 함께
+  // 요구한다 — 별도 AI 회차 0, 상한(8회) 집계도 이 한 번에 공유. 안건 없으면 책사단 생략.
+  const agendas = Array.isArray(opts.councilAgendas) ? opts.councilAgendas : [];
+  for (const a of agendas) {
+    // 법정(수급) 입력: 군의가 방금 수집한 시장 전체 외국인 연속 일수를 보강(제한 판정)
+    a.inputs = a.inputs || {};
+    if (a.inputs.marketForeignStreak === undefined && typeof judgeIn.foreign_net_days === 'number') {
+      a.inputs.marketForeignStreak = judgeIn.foreign_net_days;
+    }
+  }
+
   // LLM 해석 — 신뢰 입력은 판정값·수치만(장부·계좌 없음)
   const llmData = {
     weather: j.weather, stage: j.stage,
@@ -105,10 +117,13 @@ async function morningCouncil(opts) {
     kospi_close: judgeIn.kospi_close, kospi_ma20: judgeIn.kospi_ma20,
     signals: j.signals.map((s) => ({ no: s.no, on: s.on, basis: s.basis })),
   };
+  if (agendas.length > 0) {
+    llmData.council_agendas = agendas.map((a) => ({ id: a.id, ticker: a.ticker, name: a.name || null, agenda_type: a.agenda_type }));
+  }
   let marketLines = null;
   let todayActions = null;
   let counselUsed = false;
-  const res = strategist.call('counsel', { data: llmData }, opts.strategistOpts || opts);
+  const res = strategist.call('counsel', { data: llmData, councilRequested: agendas.length > 0 }, opts.strategistOpts || opts);
   if (res.ok && res.data) {
     const outText = JSON.stringify([res.data.market_lines, res.data.today_actions]);
     const check = verifyNumbers(outText, llmData);
@@ -144,7 +159,18 @@ async function morningCouncil(opts) {
   const reportFile = path.join(dir, `${collected.date}-gunui.md`);
   fs.writeFileSync(reportFile, report + '\n', 'utf8');
 
-  return { report, reportFile, snapshotFile, judgment: j, counselUsed, collected };
+  // 책사단 실행(편승한 응답의 council_voices 재사용 — 추가 호출 0).
+  // counsel 실패·상한 초과·형식 오류면 voices가 비어 AI 4인은 폴백으로 기록된다(규칙 3인은 영향 없음).
+  let councilResult = null;
+  if (agendas.length > 0) {
+    const voices = res.ok && res.data && Array.isArray(res.data.council_voices) ? res.data.council_voices : null;
+    councilResult = await council.runCouncil(agendas, {
+      dataDir: opts.dataDir,
+      aiCall: () => JSON.stringify(voices), // null이면 파싱 후 비배열 — 전원 폴백
+    });
+  }
+
+  return { report, reportFile, snapshotFile, judgment: j, counselUsed, collected, council: councilResult };
 }
 
 // ---------- 출사표 초안(REQ-017): 근거·숫자 검증 포함 ----------
@@ -219,8 +245,19 @@ async function advise(situation, strategistOpts) {
 
 // ---------- 통찰(REQ-019): 형식 고정·degrade 생략 ----------
 // decision: { type: 'execute_wait'|'advise'|'judgment_needed', data: {숫자…} }
-async function insight(decision, strategistOpts) {
-  const res = strategist.call('insight', { data: decision.data }, strategistOpts);
+// opts.councilAgendas(선택): 장중 안건 — 척후 몫의 '이 호출'에 책사단 4목소리를 편승(지령 013 2항).
+//   별도 AI 회차를 만들지 않는다. insight가 degrade여도 책사단은 폴백으로 기록된다.
+async function insight(decision, strategistOpts, opts) {
+  opts = opts || {};
+  const agendas = Array.isArray(opts.councilAgendas) ? opts.councilAgendas : [];
+  const data = agendas.length > 0
+    ? Object.assign({}, decision.data, { council_agendas: agendas.map((a) => ({ id: a.id, ticker: a.ticker, name: a.name || null, agenda_type: a.agenda_type })) })
+    : decision.data;
+  const res = strategist.call('insight', { data, councilRequested: agendas.length > 0 }, strategistOpts);
+  if (agendas.length > 0) {
+    const voices = res.ok && res.data && Array.isArray(res.data.council_voices) ? res.data.council_voices : null;
+    await council.runCouncil(agendas, { dataDir: opts.dataDir, aiCall: () => JSON.stringify(voices) });
+  }
   if (!res.ok || !res.data) return null; // degrade — 결정은 숫자만으로 가능(REQ-019 AC4)
 
   const d = res.data;
