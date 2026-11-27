@@ -149,6 +149,13 @@ async function collect(opts) {
     sources.us_summary = 'websearch';
     sources.night_future_pct = 'websearch';
     if (on.night_future_pct == null) missing.push('night_future_pct');
+    // VIX 휴장 유지(군주 상책 2026-11-27): 당일 null이면 직전 거래일 값(최대 3거래일)
+    const carried = carryVix(on, date, opts);
+    if (carried) {
+      judgeInputs.us_summary = Object.assign({}, judgeInputs.us_summary, { vix: carried.vix });
+      judgeInputs.vix_carried_from = carried.from;
+      sources.vix = `carried(${carried.from})`;
+    }
   } else {
     missing.push('night_future_pct', 'us_summary');
   }
@@ -249,4 +256,25 @@ function loadSnapshot(date, opts) {
   return JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), 'utf8'));
 }
 
-module.exports = { collect, saveSnapshot, loadSnapshot, dailyKospi, intradayNaver, overnightWeb, investorKis };
+// VIX 휴장 유지(군주 상책 2026-11-27): 당일 overnight의 vix가 null(미 휴장 등)이면
+// 직전 거래일(최대 3거래일)의 overnight 캐시에서 vix만 가져온다. 초과·부재면 null(보수 꺼짐 유지).
+// 다른 지표(sox 등)는 유지하지 않는다 — 결정 범위는 VIX뿐.
+function carryVix(on, date, opts) {
+  if (!on || !on.us_summary || on.us_summary.vix != null) return null; // 당일 값 있으면 불개입
+  const calendar = require('./market_calendar');
+  const dataDir = paths.resolveDataDir(opts);
+  let d = date;
+  for (let i = 0; i < 3; i++) {
+    d = calendar.prevTradingDay(d, opts);
+    if (!d) return null;
+    const f = overnightCachePath(dataDir, d);
+    if (!fs.existsSync(f)) continue;
+    try {
+      const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (c.us_summary && typeof c.us_summary.vix === 'number') return { vix: c.us_summary.vix, from: d };
+    } catch (e) { /* 손상 캐시 — 계속 과거로 */ }
+  }
+  return null;
+}
+
+module.exports = { collect, saveSnapshot, loadSnapshot, dailyKospi, intradayNaver, overnightWeb, investorKis, carryVix };
