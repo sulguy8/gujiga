@@ -99,8 +99,10 @@ test('신호1 연동: 1 없으면 false 기록·다른 수동 필드 보존, 파
     const r2 = shadow.syncSignal1FromAside('2026-11-28', { dataDir: dir, asideRoot });
     assert.equal(r2.applied, false, '파일 없음 — 미적용(기존 유지)');
     assert.equal(JSON.stringify(state.read('signal_inputs', { dataDir: dir })), before);
-    // 원본 Aside 파일 불변(읽기 전용)
+    // 원본 Aside 파일 불변(읽기 전용) — 전문 비교(군사 지적: 필드 부재 검사는 약함)
     const f = path.join(asideRoot, 'trading', 'reports', '2026-11-27.json');
-    assert.ok(!JSON.parse(fs.readFileSync(f, 'utf8')).touched, '원본 쓰기 0');
+    const snapBefore = fs.readFileSync(f, 'utf8');
+    shadow.syncSignal1FromAside('2026-11-27', { dataDir: dir, asideRoot });
+    assert.equal(fs.readFileSync(f, 'utf8'), snapBefore, '원본 전문 불변');
   } finally { rm(dir); }
 });

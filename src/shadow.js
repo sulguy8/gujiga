@@ -348,7 +348,7 @@ async function watchRetreats(date, opts) {
 function syncSignal1FromAside(date, opts) {
   if (!opts.asideRoot) return { applied: false, reason: 'asideRoot 없음' };
   const f = path.join(opts.asideRoot, 'trading', 'reports', `${date}.json`);
-  if (!fs.existsSync(f)) return { applied: false, reason: '당일 Aside report 없음(기존 값 유지)' };
+  if (!fs.existsSync(f)) return { applied: false, reason: 'no_file', note: '당일 Aside report 없음(기존 값 유지)' };
   let j;
   try {
     j = JSON.parse(fs.readFileSync(f, 'utf8')); // 읽기만 — 원본 수정 금지
@@ -587,7 +587,13 @@ async function runOnce(opts) {
   // 08:31 군의(수집→판정→스냅샷→보고) + sox 3일 창 갱신 + PC 알림
   // 책사단(지령 013): 안건이 있으면 군의 counsel 호출 '한 번'에 4목소리 편승(별도 회차 0)
   if (minutes >= toMin('08:31') && !hasRec(log, 'council_0831', date)) {
-    syncSignal1FromAside(date, opts); // 신호1 Aside 연동(군주 상책 — 군의 판정 직전 갱신)
+    // 레이스 방지(군사 지적 2026-11-27): Aside 군의도 08:31에 보고를 쓰므로, 당일 Aside report가
+    // 아직 없으면 08:36까지 군의를 다음 틱으로 미룬다(신호1을 전일 값으로 판정하는 것 방지).
+    // 08:36을 넘기면 그대로 진행(전일 값 유지 — 보수), asideRoot 미설정 환경은 대기 없음.
+    const sync = syncSignal1FromAside(date, opts); // 신호1 Aside 연동(군주 상책 — 군의 판정 직전 갱신)
+    if (!sync.applied && sync.reason === 'no_file' && minutes < toMin('08:36')) {
+      return { trading: true, date, ran, missed }; // 다음 틱 재시도(이미 수집한 missed 재사용)
+    }
     const councilAgendas = await buildCouncilAgendas(date, opts);
     const c = await gunshi.morningCouncil(Object.assign({}, opts, { councilAgendas }));
     const sox = c.collected.judgeInputs.us_summary && c.collected.judgeInputs.us_summary.sox;
