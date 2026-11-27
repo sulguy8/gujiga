@@ -59,9 +59,12 @@ function judgeSignals(inp) {
     ? { no: 1, on: true, basis: '악재에도 보합 이상 마감' }
     : { no: 1, on: false, basis: '악재 둔화 미확인(보수)', missing: inp.bad_news_resilient == null || undefined });
 
-  // 2. VIX 종가 < 30
+  // 2. VIX 종가 < 30. 미 휴장으로 직전 거래일 값을 유지한 경우 출처를 근거에 명시(군주 상책 2026-11-27)
   if (vix == null) signals.push({ no: 2, on: false, basis: 'VIX 결측(보수 꺼짐)', missing: true });
-  else signals.push({ no: 2, on: vix < VIX_MAX, basis: `VIX ${vix} ${vix < VIX_MAX ? '<' : '≥'} ${VIX_MAX}` });
+  else {
+    const carry = inp.vix_carried_from ? ` (미 휴장 — ${inp.vix_carried_from} 값 유지)` : '';
+    signals.push({ no: 2, on: vix < VIX_MAX, basis: `VIX ${vix} ${vix < VIX_MAX ? '<' : '≥'} ${VIX_MAX}${carry}` });
+  }
 
   // 3. SOX가 장부 기준 저점을 최근 3거래일 안 깨고 반등
   const base = isNum(inp.sox_base_low) ? inp.sox_base_low : null;

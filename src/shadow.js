@@ -342,6 +342,28 @@ async function watchRetreats(date, opts) {
   if (changed) state.write('positions', positions, opts);
 }
 
+// --- 신호1(악재 둔화) Aside 연동(군주 상책 2026-11-27 — 그림자 기간 한시) ---
+// Aside reports/<date>.json의 군의 판정(signals_on)에 1이 있으면 signal_inputs.bad_news_resilient를
+// 갱신한다. Aside 파일은 읽기만(쓰기 0), 기록은 우리 장부(state)에만. 당일 파일 없으면 기존 값 유지.
+function syncSignal1FromAside(date, opts) {
+  if (!opts.asideRoot) return { applied: false, reason: 'asideRoot 없음' };
+  const f = path.join(opts.asideRoot, 'trading', 'reports', `${date}.json`);
+  if (!fs.existsSync(f)) return { applied: false, reason: '당일 Aside report 없음(기존 값 유지)' };
+  let j;
+  try {
+    j = JSON.parse(fs.readFileSync(f, 'utf8')); // 읽기만 — 원본 수정 금지
+  } catch (e) {
+    return { applied: false, reason: `파싱 실패: ${e.message}` };
+  }
+  if (!Array.isArray(j.signals_on)) return { applied: false, reason: 'signals_on 없음' };
+  const on = j.signals_on.includes(1);
+  const cur = state.read('signal_inputs', opts) || {};
+  state.write('signal_inputs', Object.assign({}, cur, {
+    bad_news_resilient: on, signal1_source: 'aside_report', signal1_date: date,
+  }), Object.assign({ message: `state: 신호1 Aside 연동(${date} — ${on ? '켜짐' : '꺼짐'})` }, opts));
+  return { applied: true, on };
+}
+
 // --- 책사단 안건 수집(지령 013): "그날 결정할 것"만 — 없으면 책사단 생략 ---
 // 보유 점검(hold): 성벽(손절선) 3% 이내 접근 종목. 진입 검토(entry): watchlist에
 // entry_low/high가 있고 현재가가 범위 ±3% 안인 관심 성 최대 2개.
@@ -565,6 +587,7 @@ async function runOnce(opts) {
   // 08:31 군의(수집→판정→스냅샷→보고) + sox 3일 창 갱신 + PC 알림
   // 책사단(지령 013): 안건이 있으면 군의 counsel 호출 '한 번'에 4목소리 편승(별도 회차 0)
   if (minutes >= toMin('08:31') && !hasRec(log, 'council_0831', date)) {
+    syncSignal1FromAside(date, opts); // 신호1 Aside 연동(군주 상책 — 군의 판정 직전 갱신)
     const councilAgendas = await buildCouncilAgendas(date, opts);
     const c = await gunshi.morningCouncil(Object.assign({}, opts, { councilAgendas }));
     const sox = c.collected.judgeInputs.us_summary && c.collected.judgeInputs.us_summary.sox;
@@ -704,4 +727,4 @@ async function runOnce(opts) {
   return { trading: true, date, ran, missed };
 }
 
-module.exports = { runOnce, updateSoxWindow, compareWithAside, watchSorties, runSnapshot, JOBS };
+module.exports = { runOnce, updateSoxWindow, compareWithAside, watchSorties, runSnapshot, syncSignal1FromAside, JOBS };

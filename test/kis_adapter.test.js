@@ -218,8 +218,9 @@ test('토큰: 유효 캐시가 있으면 tokenP 호출 0 (재발급 금지 — �
   const mockSrv = await fakeKisServer({});
   const realSrv = await fakeKisServer({});
   try {
-    // 유효한 가짜 토큰 캐시(만료까지 여유)를 DPAPI로 미리 저장
-    secret.saveToken('kis_token_mock', { token: 'FAKE-CACHED-TOKEN', expires: '2026-11-26 23:59:59' }, { dataDir: dir });
+    // 유효한 가짜 토큰 캐시(만료까지 여유)를 DPAPI로 미리 저장 — 만료는 '내일'로 동적 생성(날짜 하드코딩 금지)
+    const tomorrow = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
+    secret.saveToken('kis_token_mock', { token: 'FAKE-CACHED-TOKEN', expires: `${tomorrow} 23:59:59` }, { dataDir: dir });
     const api = await kis.make('mock', { dataDir: dir, keysPath, baseUrls: { mock: mockSrv.url, real: realSrv.url }, gapMs: 30 });
     await api.quote('005930');
     await api.balance();
